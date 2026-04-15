@@ -143,6 +143,20 @@ def build_parser() -> argparse.ArgumentParser:
     _add_browser_connect_args(browser_sequence)
     browser_sequence.add_argument("--steps", required=True)
 
+    browser_contract_loop = sub.add_parser(
+        "browser-contract-loop",
+        help="Open the hosted game client and repeat a contract-advancement prompt",
+    )
+    _add_browser_connect_args(browser_contract_loop)
+    browser_contract_loop.add_argument("--iterations", type=int, default=3)
+    browser_contract_loop.add_argument(
+        "--prompt",
+        default="complete the next tutorial or contract step now if you can",
+    )
+    browser_contract_loop.add_argument("--input-timeout-ms", type=int, default=180_000)
+    browser_contract_loop.add_argument("--wait-after-ms", type=int, default=60_000)
+    browser_contract_loop.add_argument("--skip-input-wait", action="store_true")
+
     browser_click = sub.add_parser(
         "browser-click",
         help="Open the hosted game client in a browser, click one button, and close",
@@ -451,6 +465,42 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "results": results,
+                        "events": await browser.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "browser-contract-loop":
+        if args.iterations < 1:
+            raise HeadlessBrowserError(
+                "browser-contract-loop",
+                "--iterations must be >= 1",
+            )
+        async with HostedGameBrowserProcess(config) as browser:
+            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            iterations: list[dict[str, Any]] = []
+            for iteration in range(args.iterations):
+                command_result = await browser.send_command(
+                    args.prompt,
+                    wait_after_ms=args.wait_after_ms,
+                    wait_for_input_enabled=not args.skip_input_wait,
+                    input_timeout_ms=args.input_timeout_ms,
+                    body_text_limit=args.body_text_limit,
+                )
+                status_result = await browser.status(body_text_limit=args.body_text_limit)
+                iterations.append(
+                    {
+                        "iteration": iteration + 1,
+                        "command": command_result,
+                        "status": status_result,
+                    }
+                )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "iterations": iterations,
                         "events": await browser.drain_events(),
                     }
                 )

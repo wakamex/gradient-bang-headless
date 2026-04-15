@@ -91,6 +91,7 @@ Newest proven gameplay capability:
 - live command chaining inside one hosted session
 - travel from sector `4658` to adjacent sector `301`
 - completion of the first `TAKING FLIGHT` contract step
+- completion of the next tutorial steps through mega-port arrival, refuel, and commodity purchase
 
 ## Planned Commit Sequence
 
@@ -171,6 +172,19 @@ Success condition:
 - live gameplay can progress across multiple dependent actions without
   reconnecting between them
 
+### 7. Contract Progress Loop
+
+Commit scope:
+
+- add a `browser-contract-loop` CLI action
+- repeat the proven advancement prompt inside one hosted browser session
+- capture a status snapshot after each iteration
+
+Success condition:
+
+- tutorial or contract progression can be driven for several iterations without
+  hand-writing a JSON sequence each time
+
 ## Definition Of “As Far As Possible”
 
 For this repo, “as far as possible” means:
@@ -216,7 +230,6 @@ surface over direct edge-function gameplay calls.
 
 ## Immediate Next Step
 
-Use the same-session browser runner to push beyond the first travel objective:
-inspect the active contract, locate a mega-port in Federation Space, and keep
-adding only the next missing automation primitive when gameplay proves it is
-needed.
+Use the contract loop to keep advancing the starter contract line, and only add
+more DOM-level or data-extraction features if the assistant stops being able to
+complete the next step from text commands alone.
