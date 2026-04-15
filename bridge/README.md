@@ -1,9 +1,7 @@
 # Bridge Runtimes
 
-This package now contains two headless runtimes:
-
-- a pure Node `smallwebrtc` bridge for direct Pipecat transport work
-- a hosted-browser runner for the live `game.gradient-bang.com` client
+This package contains the pure Node `smallwebrtc` bridge used by the headless
+client for direct Pipecat transport work.
 
 ## SmallWebRTC Bridge
 
@@ -60,32 +58,3 @@ The bridge also supports direct reconnect by existing bot session:
   `start -> /start/{sessionId}/api/offer -> connecting`
 - The pure Node transport does not yet reach Pipecat `bot_ready`; use
   `connectTimeoutMs` so callers fail cleanly instead of hanging forever.
-
-## Hosted Browser Runner
-
-The hosted-browser runner uses Playwright and Chromium to drive the real live
-client at `https://game.gradient-bang.com/`.
-
-Run it with:
-
-```bash
-npm run browser
-```
-
-Supported JSON commands:
-
-```json
-{"id":"1","op":"connect","email":"you@example.com","password":"...","characterName":"Pilot"}
-{"id":"2","op":"status"}
-{"id":"3","op":"sendCommand","text":"skip tutorial"}
-{"id":"4","op":"clickButton","label":"Skip Tutorial"}
-{"id":"5","op":"close"}
-```
-
-Current status:
-
-- production login works
-- character selection works
-- the hosted client reaches real in-game state
-- `connect` now returns a game-shell snapshot even when the command box is
-  still disabled during intro/tutorial narration

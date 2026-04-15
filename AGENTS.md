@@ -6,8 +6,8 @@ Repo-specific guidance for headless client work:
 2. Prefer implementation paths in this order:
    - direct edge-function call
    - direct Pipecat session client message
-   - browser automation
-3. Treat browser automation as a last resort for local-only UI state, discovery, or debugging.
+   - temporary off-path diagnostics only
+3. Do not ship browser automation as a supported gameplay path in this repo.
 4. When tracing a feature, start from `upstream/` source code and map:
    - frontend handler
    - Pipecat message

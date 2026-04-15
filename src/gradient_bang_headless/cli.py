@@ -3,11 +3,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 import sys
 from typing import Any
 
-from .browser import BrowserConnectOptions, HeadlessBrowserError, HostedGameBrowserProcess
 from .config import HeadlessConfig, update_dotenv
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
 from .http import (
@@ -17,8 +15,6 @@ from .http import (
     StartOptions,
     dump_json,
 )
-
-TERMINAL_ENGINE_STATES = {"COMPLETED", "FAILED", "IDLE"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(dispatch(args))
     except KeyboardInterrupt:
         return 130
-    except (HeadlessApiError, HeadlessBridgeError, HeadlessBrowserError) as exc:
+    except (HeadlessApiError, HeadlessBridgeError) as exc:
         print(str(exc), file=sys.stderr)
         payload = getattr(exc, "payload", None)
         if payload is not None:
@@ -215,65 +211,6 @@ def build_parser() -> argparse.ArgumentParser:
     session_user_text.add_argument("--text", required=True)
     session_user_text.add_argument("--wait-seconds", type=float, default=0.0)
 
-    browser_connect = sub.add_parser(
-        "browser-connect",
-        help="Open the hosted game client in a browser, log in, and report state",
-    )
-    _add_browser_connect_args(browser_connect)
-
-    browser_command = sub.add_parser(
-        "browser-command",
-        help="Open the hosted game client in a browser, send one command, and close",
-    )
-    _add_browser_connect_args(browser_command)
-    browser_command.add_argument("--text", required=True)
-    browser_command.add_argument("--input-timeout-ms", type=int, default=180_000)
-    browser_command.add_argument("--wait-after-ms", type=int, default=15_000)
-    browser_command.add_argument("--skip-input-wait", action="store_true")
-
-    browser_sequence = sub.add_parser(
-        "browser-sequence",
-        help="Open the hosted game client in a browser, run a JSON step list, and close",
-    )
-    _add_browser_connect_args(browser_sequence)
-    browser_sequence.add_argument("--steps", required=True)
-
-    browser_contract_loop = sub.add_parser(
-        "browser-contract-loop",
-        help="Open the hosted game client and repeat a contract-advancement prompt",
-    )
-    _add_browser_connect_args(browser_contract_loop)
-    browser_contract_loop.add_argument("--iterations", type=int, default=3)
-    browser_contract_loop.add_argument(
-        "--prompt",
-        default="complete the next tutorial or contract step now if you can",
-    )
-    browser_contract_loop.add_argument("--input-timeout-ms", type=int, default=180_000)
-    browser_contract_loop.add_argument("--wait-after-ms", type=int, default=60_000)
-    browser_contract_loop.add_argument("--skip-input-wait", action="store_true")
-
-    browser_command_watch = sub.add_parser(
-        "browser-command-watch",
-        help="Open the hosted game client, send one command, and poll until the task settles",
-    )
-    _add_browser_connect_args(browser_command_watch)
-    browser_command_watch.add_argument("--text", required=True)
-    browser_command_watch.add_argument("--input-timeout-ms", type=int, default=180_000)
-    browser_command_watch.add_argument("--wait-after-ms", type=int, default=15_000)
-    browser_command_watch.add_argument("--watch-timeout-ms", type=int, default=300_000)
-    browser_command_watch.add_argument("--poll-interval-ms", type=int, default=15_000)
-    browser_command_watch.add_argument("--skip-input-wait", action="store_true")
-
-    browser_click = sub.add_parser(
-        "browser-click",
-        help="Open the hosted game client in a browser, click one button, and close",
-    )
-    _add_browser_connect_args(browser_click)
-    browser_click.add_argument("--label", required=True)
-    browser_click.add_argument("--timeout-ms", type=int, default=120_000)
-    browser_click.add_argument("--wait-after-ms", type=int, default=5_000)
-    browser_click.add_argument("--force", action="store_true")
-
     call = sub.add_parser("call", help="Generic edge-function call")
     call.add_argument("endpoint")
     call.add_argument("--method", default="POST", choices=["GET", "POST"])
@@ -437,23 +374,6 @@ def _add_session_connect_args(parser: argparse.ArgumentParser) -> None:
         default="none",
     )
     _add_start_options(parser)
-    _add_common_config_args(parser)
-
-
-def _add_browser_connect_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--site-url")
-    parser.add_argument("--email")
-    parser.add_argument("--password")
-    parser.add_argument("--character-name")
-    parser.add_argument("--headful", action="store_true")
-    parser.add_argument("--connect-timeout-ms", type=int, default=120_000)
-    parser.add_argument("--post-connect-wait-ms", type=int, default=0)
-    parser.add_argument("--body-text-limit", type=int, default=4_000)
-    parser.add_argument("--log-console", action="store_true")
-    parser.add_argument("--log-network", action="store_true")
-    parser.add_argument("--log-transport", action="store_true")
-    parser.add_argument("--traffic-limit", type=int, default=200)
-    parser.add_argument("--traffic-body-limit", type=int, default=2_000)
     _add_common_config_args(parser)
 
 
@@ -846,219 +766,6 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
-    if args.command == "browser-connect":
-        async with HostedGameBrowserProcess(config) as browser:
-            result = await browser.connect(_browser_connect_options_from_args(args, config))
-            print(
-                dump_json(
-                    {
-                        "connect": result,
-                        "events": await browser.drain_events(),
-                    }
-                )
-            )
-            return 0
-
-    if args.command == "browser-command":
-        async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
-            command_result = await browser.send_command(
-                args.text,
-                wait_after_ms=args.wait_after_ms,
-                wait_for_input_enabled=not args.skip_input_wait,
-                input_timeout_ms=args.input_timeout_ms,
-                body_text_limit=args.body_text_limit,
-            )
-            print(
-                dump_json(
-                    {
-                        "connect": connect_result,
-                        "result": command_result,
-                        "events": await browser.drain_events(),
-                    }
-                )
-            )
-            return 0
-
-    if args.command == "browser-sequence":
-        async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
-            steps = _parse_json_array(args.steps)
-            results: list[dict[str, Any]] = []
-            for index, step in enumerate(steps):
-                step_type = step.get("type")
-                if step_type == "command":
-                    result = await browser.send_command(
-                        _require_browser_step_string(step, "text"),
-                        wait_after_ms=int(step.get("wait_after_ms", 15_000)),
-                        wait_for_input_enabled=not bool(step.get("skip_input_wait", False)),
-                        input_timeout_ms=int(step.get("input_timeout_ms", 180_000)),
-                        body_text_limit=int(step.get("body_text_limit", args.body_text_limit)),
-                    )
-                elif step_type == "click":
-                    result = await browser.click_button(
-                        _require_browser_step_string(step, "label"),
-                        wait_after_ms=int(step.get("wait_after_ms", 5_000)),
-                        timeout_ms=int(step.get("timeout_ms", 120_000)),
-                        force=bool(step.get("force", False)),
-                        body_text_limit=int(step.get("body_text_limit", args.body_text_limit)),
-                    )
-                elif step_type == "status":
-                    result = await browser.status(
-                        body_text_limit=int(step.get("body_text_limit", args.body_text_limit))
-                    )
-                elif step_type == "wait":
-                    wait_ms = int(step.get("wait_ms", 0))
-                    if wait_ms < 0:
-                        raise HeadlessBrowserError(
-                            "browser-sequence",
-                            f"wait_ms must be >= 0 at index {index}",
-                        )
-                    await asyncio.sleep(wait_ms / 1000.0)
-                    result = {"waited_ms": wait_ms}
-                elif step_type == "screenshot":
-                    result = await browser.screenshot(
-                        _require_browser_step_string(step, "path"),
-                        full_page=bool(step.get("full_page", True)),
-                    )
-                else:
-                    raise HeadlessBrowserError(
-                        "browser-sequence",
-                        f"unsupported step type at index {index}: {step_type!r}",
-                    )
-                results.append(
-                    {
-                        "index": index,
-                        "type": step_type,
-                        "result": result,
-                    }
-                )
-            print(
-                dump_json(
-                    {
-                        "connect": connect_result,
-                        "results": results,
-                        "events": await browser.drain_events(),
-                    }
-                )
-            )
-            return 0
-
-    if args.command == "browser-contract-loop":
-        if args.iterations < 1:
-            raise HeadlessBrowserError(
-                "browser-contract-loop",
-                "--iterations must be >= 1",
-            )
-        async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
-            iterations: list[dict[str, Any]] = []
-            for iteration in range(args.iterations):
-                command_result = await browser.send_command(
-                    args.prompt,
-                    wait_after_ms=args.wait_after_ms,
-                    wait_for_input_enabled=not args.skip_input_wait,
-                    input_timeout_ms=args.input_timeout_ms,
-                    body_text_limit=args.body_text_limit,
-                )
-                status_result = await browser.status(body_text_limit=args.body_text_limit)
-                iterations.append(
-                    {
-                        "iteration": iteration + 1,
-                        "command": command_result,
-                        "status": status_result,
-                    }
-                )
-            print(
-                dump_json(
-                    {
-                        "connect": connect_result,
-                        "iterations": iterations,
-                        "events": await browser.drain_events(),
-                    }
-                )
-            )
-            return 0
-
-    if args.command == "browser-command-watch":
-        if args.watch_timeout_ms < 0:
-            raise HeadlessBrowserError(
-                "browser-command-watch",
-                "--watch-timeout-ms must be >= 0",
-            )
-        if args.poll_interval_ms < 1:
-            raise HeadlessBrowserError(
-                "browser-command-watch",
-                "--poll-interval-ms must be >= 1",
-            )
-        async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
-            command_result = await browser.send_command(
-                args.text,
-                wait_after_ms=args.wait_after_ms,
-                wait_for_input_enabled=not args.skip_input_wait,
-                input_timeout_ms=args.input_timeout_ms,
-                body_text_limit=args.body_text_limit,
-            )
-            updates: list[dict[str, Any]] = []
-            final_result = command_result
-            stop_reason = "watch_timeout"
-            initial_state = _extract_engine_status(command_result)
-            if initial_state in TERMINAL_ENGINE_STATES:
-                stop_reason = f"engine_status:{initial_state.lower()}"
-            else:
-                started_at = asyncio.get_running_loop().time()
-                while (asyncio.get_running_loop().time() - started_at) * 1000 < args.watch_timeout_ms:
-                    await asyncio.sleep(args.poll_interval_ms / 1000.0)
-                    status_result = await browser.status(body_text_limit=args.body_text_limit)
-                    engine_state = _extract_engine_status(status_result)
-                    elapsed_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
-                    updates.append(
-                        {
-                            "elapsed_ms": elapsed_ms,
-                            "engine_status": engine_state,
-                            "status": status_result,
-                        }
-                    )
-                    final_result = status_result
-                    if engine_state in TERMINAL_ENGINE_STATES:
-                        stop_reason = f"engine_status:{engine_state.lower()}"
-                        break
-            print(
-                dump_json(
-                    {
-                        "connect": connect_result,
-                        "command": command_result,
-                        "updates": updates,
-                        "final": final_result,
-                        "stopReason": stop_reason,
-                        "events": await browser.drain_events(),
-                    }
-                )
-            )
-            return 0
-
-    if args.command == "browser-click":
-        async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
-            click_result = await browser.click_button(
-                args.label,
-                wait_after_ms=args.wait_after_ms,
-                timeout_ms=args.timeout_ms,
-                force=args.force,
-                body_text_limit=args.body_text_limit,
-            )
-            print(
-                dump_json(
-                    {
-                        "connect": connect_result,
-                        "result": click_result,
-                        "events": await browser.drain_events(),
-                    }
-                )
-            )
-            return 0
-
     if args.command == "call":
         async with HeadlessApiClient(config) as client:
             result = await client.request(
@@ -1362,38 +1069,6 @@ def _session_connect_options_from_args(
         character_name=args.character_name,
     )
 
-
-def _browser_connect_options_from_args(
-    args: argparse.Namespace,
-    config: HeadlessConfig,
-) -> BrowserConnectOptions:
-    return BrowserConnectOptions(
-        email=_require_text(args.email, config.email, "email", env_name="GB_EMAIL"),
-        password=_require_text(
-            args.password,
-            config.password,
-            "password",
-            env_name="GB_PASSWORD",
-        ),
-        character_name=_require_text(
-            args.character_name,
-            config.character_name,
-            "character-name",
-            env_name="GB_CHARACTER_NAME",
-        ),
-        site_url=(args.site_url or config.site_url).strip(),
-        headless=not args.headful,
-        connect_timeout_ms=args.connect_timeout_ms,
-        post_connect_wait_ms=args.post_connect_wait_ms,
-        body_text_limit=args.body_text_limit,
-        log_console=args.log_console,
-        log_network=args.log_network,
-        log_transport=args.log_transport,
-        traffic_limit=args.traffic_limit,
-        traffic_body_limit=args.traffic_body_limit,
-    )
-
-
 def _require_access_token(raw: str | None, config: HeadlessConfig) -> str:
     token = raw or config.access_token
     if not token:
@@ -1432,14 +1107,6 @@ def _require_text(
             f"missing --{field_name} or {env_name}",
         )
     return value
-
-
-def _require_browser_step_string(step: dict[str, Any], key: str) -> str:
-    value = step.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise HeadlessBrowserError("browser-sequence", f"step field {key!r} is required")
-    return value
-
 
 def _count_login_characters(login_result: dict[str, Any]) -> int:
     characters = login_result.get("characters")
@@ -1500,24 +1167,6 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise HeadlessApiError("cli", 0, "expected a JSON object")
     return parsed
-
-
-def _parse_json_array(raw: str) -> list[dict[str, Any]]:
-    parsed = json.loads(raw)
-    if not isinstance(parsed, list) or any(not isinstance(item, dict) for item in parsed):
-        raise HeadlessApiError("cli", 0, "expected a JSON array of objects")
-    return parsed
-
-
-def _extract_engine_status(result: dict[str, Any]) -> str | None:
-    body = result.get("bodyText")
-    if not isinstance(body, str):
-        return None
-    match = re.search(r"ENGINE STATUS:\s*([A-Z]+)", body)
-    if not match:
-        return None
-    return match.group(1)
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

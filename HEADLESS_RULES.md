@@ -4,7 +4,7 @@ These rules exist to keep the headless client biased toward stable backend paths
 
 ## Core Rules
 
-1. Treat browser automation as a last resort.
+1. Keep the supported headless client surface browser-free.
 2. Start from `upstream/` source code before inspecting live traffic.
 3. Classify every interaction into one of three buckets:
    - local UI only
@@ -12,10 +12,7 @@ These rules exist to keep the headless client biased toward stable backend paths
    - direct edge-function RPC
 4. Prefer direct edge-function calls over browser clicks whenever a feature bottoms out in `_request("...")`.
 5. Prefer direct Pipecat session messages over browser clicks whenever the frontend uses `client.sendClientMessage(...)`.
-6. Use the browser only for:
-   - local-only UI state with no backend path
-   - discovery when the code path is still unclear
-   - debugging or validating an inference from code
+6. If browser work is ever used during investigation, keep it outside the supported client surface and treat it as one-off diagnostics only.
 7. Do not assume a visible button means there is a dedicated HTTP endpoint for that button.
 8. Confirm uncertain mappings with live traces only after reading the code path.
 9. When a mapping is proven, write it down in docs or code comments so the browser does not become the default again.
@@ -71,9 +68,9 @@ When adding a new headless feature, default in this order:
 
 1. direct edge-function method
 2. direct Pipecat session message
-3. browser automation
+3. temporary off-path diagnostics only, never the shipped feature path
 
-If a feature currently needs the browser, the next question should be: "What semantic action is this UI actually triggering?"
+If a feature currently seems to need the browser, the next question should be: "What semantic action is this UI actually triggering?"
 
 ## Credentials And Config
 
@@ -87,7 +84,6 @@ If a feature currently needs the browser, the next question should be: "What sem
 Current expected variables include:
 
 - `GB_FUNCTIONS_URL`
-- `GB_SITE_URL`
 - `GB_EMAIL`
 - `GB_PASSWORD`
 - `GB_CHARACTER_NAME`

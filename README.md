@@ -18,8 +18,6 @@ This scaffold supports:
 - `events_since` polling for request/event correlation
 - a text-first Node SmallWebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
 - Python/CLI bridge integration for `smallwebrtc` session connect/request/message flows
-- a hosted-browser runner for the live `game.gradient-bang.com` client
-- browser-based diagnostics and fallback automation for production transport gaps
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -45,10 +43,9 @@ The CLI auto-loads a repo-root `.env` if present. Copy `.env.example` or export
 values directly:
 
 - `GB_FUNCTIONS_URL`: defaults to `https://api.gradient-bang.com/functions/v1`
-- `GB_SITE_URL`: defaults to `https://game.gradient-bang.com/`
 - `GB_EMAIL`: default login email for public/bootstrap flows
 - `GB_PASSWORD`: default login password for public/bootstrap flows
-- `GB_CHARACTER_NAME`: default character name for bootstrap and hosted-client flows
+- `GB_CHARACTER_NAME`: default character name for bootstrap flows
 - `GB_API_TOKEN`: trusted gameplay token for protected edge functions
 - `GB_ACCESS_TOKEN`: Supabase access token returned by `login`
 - `GB_REFRESH_TOKEN`: Supabase refresh token returned by `login`
@@ -93,21 +90,6 @@ gb-headless session-assign-quest \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
   --quest-code tutorial_corporations
-gb-headless browser-connect \
-  --headful
-gb-headless browser-click \
-  --label 'Skip Tutorial'
-gb-headless browser-command \
-  --text 'plot a safe course'
-gb-headless browser-sequence \
-  --steps '[{"type":"command","text":"show my contracts panel"},{"type":"command","text":"find the nearest mega-port and take us there"}]'
-gb-headless browser-contract-loop \
-  --iterations 3 \
-  --wait-after-ms 60000
-gb-headless browser-command-watch \
-  --text 'complete the next tutorial or contract step now if you can' \
-  --watch-timeout-ms 300000 \
-  --poll-interval-ms 15000
 gb-headless call leaderboard_resources --method GET
 gb-headless status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless plot-course --to-sector 301 --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
@@ -129,7 +111,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `session-cancel-task`, `session-skip-tutorial`, and `session-user-text`
   follow the frontend's real message -> event pattern and are preferred over
   hand-written `session-message` payloads.
-- `.env` values are used automatically for login/browser defaults, so the
+- `.env` values are used automatically for login/session defaults, so the
   shortest commands can omit repeated credentials.
 - `auth-sync` is the shortest way to populate runtime auth state in `.env`:
   it logs in, writes `GB_ACCESS_TOKEN` and `GB_REFRESH_TOKEN`, and writes
@@ -140,16 +122,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.
 - the Node bridge is text-first: it skips mic/camera capture, but still needs Node WebRTC support through `@roamhq/wrtc`.
 - `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
-- browser commands are fallback and debugging tools, not the preferred gameplay path.
-- the preferred order is:
-  direct edge-function method, then direct session message, then browser automation only as a last resort.
-- hosted-browser connect now waits for an enabled command field instead of returning during `INITIALIZING GAME INSTANCES...`.
-- `browser-command-watch` is intended for long-running local tasks like travel or trading: it sends one command and then polls status until the engine settles or the watch timeout expires.
-- `browser-command-watch` treats `IDLE`, `COMPLETED`, and `FAILED` as terminal states so bad plans return control immediately instead of burning the full timeout.
-- `browser-click` now falls back to direct DOM button-text matching, which helps with tabs and controls that exist in the DOM but are awkward through ARIA-role lookup.
-- the hosted client currently appears to use Daily transport in production, while the pure Node `smallwebrtc` path still stalls at `/start/{sessionId}/api/offer`.
-- `browser-command` has been proven live for in-game text submission after the hosted client reaches control.
-- `browser-sequence` has been proven live for same-session travel and the first tutorial contract step.
+- the preferred order is: direct edge-function method, then direct session message.
+- browser-driven gameplay is intentionally not part of the supported client surface in this repo.
+- the pure Node `smallwebrtc` path currently reaches `/start/{sessionId}/api/offer` and then stalls before `bot_ready`.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
 - `signup-and-start` is a practical two-pass CLI flow:

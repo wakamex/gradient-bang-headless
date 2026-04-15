@@ -75,28 +75,8 @@ Latest narrowing:
 
 - `start` succeeds live
 - the Node bridge receives a real `sessionId` and ICE config
-- the pure Node path hangs specifically on `POST /start/{sessionId}/api/offer`
-- browser-hosted production traffic is using Daily websocket signaling, not the pure Node path
-
-### Hosted Browser Runtime
-
-Proven live against production:
-
-- headless Chromium can load `https://game.gradient-bang.com/`
-- UI login works with a real account
-- character selection works through the hosted client
-- the live hosted client reaches in-game state and Pipecat `bot_ready`
-- the command input is present in the rendered game shell
-- live command submission through the hosted client works
-
-Reclassification after audit:
-
-- browser login and character selection remain acceptable bootstrap steps
-- browser command typing and DOM button clicking are now fallback-only tooling
-- the real target is semantic transport injection:
-  - direct edge-function calls when possible
-  - direct Pipecat/RTVI messages when gameplay is session-mediated
-  - browser UI only when no backend or transport path exists yet
+- the pure Node path stalls after `/start/{sessionId}/api/offer`
+- the remaining work is transport-level, not control-plane or auth
 
 ## Planned Commit Sequence
 
@@ -144,19 +124,7 @@ Success condition:
 
 - session-mediated gameplay is reachable from CLI/Python without browser UI gestures
 
-### 4. Semantic Browser Transport Fallback
-
-Commit scope:
-
-- keep the browser only as a transport host for production
-- inject typed RTVI messages into the live transport instead of clicking UI
-- capture typed responses/events for request/response flows
-
-Success condition:
-
-- the hosted client can be driven by semantic actions without DOM clicks or prompt text
-
-### 5. Node Transport Investigation
+### 4. Node Transport Investigation
 
 Commit scope:
 
@@ -169,7 +137,7 @@ Success condition:
 
 - either reach `bot_ready`, or reduce the remaining gap to one concrete incompatibility
 
-### 6. Progression Loop
+### 5. Progression Loop
 
 Commit scope:
 
@@ -219,8 +187,8 @@ Current mitigation:
 
 Current next diagnostic:
 
-- compare the pure Node `api/offer` request shape with the successful browser-hosted production session
-- prefer semantic browser transport injection over UI clicks while the Node gap remains unresolved
+- replace the current transport library usage with a minimal raw Node WebRTC path
+- keep the request/response semantics at the Pipecat client boundary
 
 ### Public Gameplay API Access
 
@@ -232,6 +200,6 @@ surface over direct edge-function gameplay calls.
 ## Immediate Next Step
 
 1. replace generic gameplay calls with named edge-function methods and CLI commands
-2. replace browser UI actions with typed session actions wherever the frontend proves them
-3. use browser runtime only as a semantic transport fallback while Node `api/offer` is unresolved
+2. keep the supported client surface browser-free
+3. replace the SmallWebRTC transport internals with a minimal Node path
 4. keep pushing the live character forward and record each newly proven capability

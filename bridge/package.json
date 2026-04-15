@@ -6,13 +6,11 @@
   "description": "Text-first SmallWebRTC bridge for Gradient Bang headless clients",
   "scripts": {
     "bridge": "node ./src/controller.mjs",
-    "browser": "node ./src/browser_controller.mjs",
     "check": "node ./src/controller.mjs --help"
   },
   "dependencies": {
     "@pipecat-ai/client-js": "1.7.0",
     "@pipecat-ai/small-webrtc-transport": "1.10.0",
-    "@roamhq/wrtc": "0.10.0",
-    "playwright": "^1.59.1"
+    "@roamhq/wrtc": "0.10.0"
   }
 }

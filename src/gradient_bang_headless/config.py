@@ -8,9 +8,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 
 DEFAULT_FUNCTIONS_URL = "https://api.gradient-bang.com/functions/v1"
-DEFAULT_SITE_URL = "https://game.gradient-bang.com/"
-
-
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -112,7 +109,6 @@ class HeadlessConfig:
     email: str | None = None
     password: str | None = None
     character_name: str | None = None
-    site_url: str = DEFAULT_SITE_URL
     node_binary: str | None = None
     bridge_dir: str | None = None
 
@@ -135,7 +131,6 @@ class HeadlessConfig:
             email=os.getenv("GB_EMAIL"),
             password=os.getenv("GB_PASSWORD"),
             character_name=os.getenv("GB_CHARACTER_NAME"),
-            site_url=(os.getenv("GB_SITE_URL") or DEFAULT_SITE_URL).strip() or DEFAULT_SITE_URL,
             node_binary=os.getenv("GB_NODE_BINARY"),
             bridge_dir=os.getenv("GB_BRIDGE_DIR"),
         )
