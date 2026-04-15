@@ -90,6 +90,11 @@ gb-headless session-assign-quest \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
   --quest-code tutorial_corporations
+gb-headless session-watch \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --message-type start \
+  --duration-seconds 5
 gb-headless call leaderboard_resources --method GET
 gb-headless status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless plot-course --to-sector 301 --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
@@ -108,7 +113,8 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   trusted gameplay commands over raw `game-call`.
 - `session-status`, `session-known-ports`, `session-task-history`,
   `session-map`, `session-assign-quest`, `session-claim-reward`,
-  `session-cancel-task`, `session-skip-tutorial`, and `session-user-text`
+  `session-cancel-task`, `session-skip-tutorial`, `session-user-text`, and
+  `session-watch`
   follow the frontend's real message -> event pattern and are preferred over
   hand-written `session-message` payloads.
 - `.env` values are used automatically for login/session defaults, so the
@@ -122,6 +128,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.
 - the Node bridge is text-first: it skips mic/camera capture, but still needs Node WebRTC support through `@roamhq/wrtc`.
 - `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
+- `session-watch` is the fastest way to inspect raw bridge events after connect and after one optional client message.
 - the preferred order is: direct edge-function method, then direct session message.
 - browser-driven gameplay is intentionally not part of the supported client surface in this repo.
 - the current public bridge bootstraps with `start(createDailyRoom=true)` and reaches transport `ready` in pure Node.

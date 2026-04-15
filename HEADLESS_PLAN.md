@@ -63,6 +63,7 @@ In progress:
 - Node WebRTC globals via `@roamhq/wrtc`
 - Python wrapper for the bridge process
 - CLI session commands for bridge-driven connect/request/message/text flows
+- CLI raw event watching through `session-watch`
 - production path reaches:
   `start -> /start/{sessionId}/api/offer -> ready`
 
@@ -78,6 +79,7 @@ Latest narrowing:
 - `createDailyRoom=false` sessions still hang on `/api/offer`
 - `createDailyRoom=true` sessions answer `/api/offer` and open a datachannel
 - Pipecat app-level frames are still missing on the public path
+- `session-watch` confirms that even explicit `start` messages currently produce no server events
 
 ## Planned Commit Sequence
 

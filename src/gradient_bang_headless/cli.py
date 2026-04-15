@@ -211,6 +211,15 @@ def build_parser() -> argparse.ArgumentParser:
     session_user_text.add_argument("--text", required=True)
     session_user_text.add_argument("--wait-seconds", type=float, default=0.0)
 
+    session_watch = sub.add_parser(
+        "session-watch",
+        help="Connect a session, optionally send one client message, wait, and dump raw events",
+    )
+    _add_session_connect_args(session_watch)
+    session_watch.add_argument("--message-type")
+    session_watch.add_argument("--data", default="{}")
+    session_watch.add_argument("--duration-seconds", type=float, default=10.0)
+
     call = sub.add_parser("call", help="Generic edge-function call")
     call.add_argument("endpoint")
     call.add_argument("--method", default="POST", choices=["GET", "POST"])
@@ -760,6 +769,31 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-watch":
+        if args.duration_seconds < 0:
+            raise HeadlessBridgeError("session-watch", "--duration-seconds must be >= 0")
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            sent_result = None
+            if args.message_type:
+                sent_result = await bridge.send_client_message(
+                    args.message_type,
+                    _parse_json_object(args.data),
+                )
+            if args.duration_seconds > 0:
+                await asyncio.sleep(args.duration_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "sent": sent_result,
                         "events": await bridge.drain_events(),
                     }
                 )
