@@ -6,6 +6,7 @@ This repo is the home for a headless client and automation tooling for Gradient 
 
 - `upstream/`: game core submodule, pinned to `git@github.com:wakamex/gradient-bang.git`
 - `src/gradient_bang_headless/`: headless client scaffold
+- `bridge/`: pure Node SmallWebRTC bridge for Pipecat transport
 
 ## Current Scope
 
@@ -14,6 +15,7 @@ This scaffold supports:
 - public control-plane calls like `register`, `login`, `user_character_create`, and `start`
 - generic edge-function calls against `https://api.gradient-bang.com/functions/v1`
 - `events_since` polling for request/event correlation
+- a text-first Node SmallWebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -28,6 +30,9 @@ git submodule update --init --recursive
 python -m venv .venv
 . .venv/bin/activate
 pip install -e .
+
+cd bridge
+npm install
 ```
 
 ## Environment
@@ -65,6 +70,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.
 - `game-call` auto-injects `character_id` and `actor_character_id` when configured.
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.
+- the Node bridge is text-first: it skips mic/camera capture, but still needs Node WebRTC support through `@roamhq/wrtc`.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
 - `signup-and-start` is a practical two-pass CLI flow:
