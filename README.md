@@ -80,6 +80,16 @@ gb-headless session-send-text \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
   --content 'plot a safe course'
+gb-headless session-status \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-known-ports \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-assign-quest \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --quest-code tutorial_corporations
 gb-headless browser-connect \
   --headful
 gb-headless browser-click \
@@ -111,6 +121,11 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `recharge-warp`, `purchase-fighters`, `ship-definitions`, `ship-purchase`,
   `quest-status`, `quest-assign`, and `quest-claim-reward` are the preferred
   trusted gameplay commands over raw `game-call`.
+- `session-status`, `session-known-ports`, `session-task-history`,
+  `session-map`, `session-assign-quest`, `session-claim-reward`,
+  `session-cancel-task`, `session-skip-tutorial`, and `session-user-text`
+  follow the frontend's real message -> event pattern and are preferred over
+  hand-written `session-message` payloads.
 - `.env` values are used automatically for login/browser defaults, so the
   shortest commands can omit repeated credentials.
 - `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.

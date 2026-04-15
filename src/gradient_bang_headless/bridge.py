@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections import deque
 from dataclasses import dataclass
@@ -216,6 +217,138 @@ class HeadlessBridgeProcess:
     async def disconnect(self) -> Any:
         return await self._send_command("disconnect", {}, response_timeout=5.0)
 
+    async def send_client_message_waiting(
+        self,
+        message_type: str,
+        *,
+        data: dict[str, Any] | None = None,
+        expected_server_events: str | set[str],
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        send_result = await self.send_client_message(message_type, data)
+        server_event = await self.wait_for_server_event(
+            expected_server_events,
+            timeout=timeout,
+        )
+        return {
+            "sent": send_result,
+            "server_event": server_event,
+        }
+
+    async def session_start(self, *, wait_seconds: float = 0.0) -> dict[str, Any]:
+        send_result = await self.send_client_message("start", {})
+        if wait_seconds > 0:
+            await asyncio.sleep(wait_seconds)
+        return {"sent": send_result}
+
+    async def get_my_status(self, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "get-my-status",
+            expected_server_events="status.snapshot",
+            timeout=timeout,
+        )
+
+    async def get_known_ports(self, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "get-known-ports",
+            expected_server_events="ports.list",
+            timeout=timeout,
+        )
+
+    async def get_task_history(
+        self,
+        *,
+        ship_id: str | None = None,
+        max_rows: int | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if ship_id:
+            payload["ship_id"] = ship_id
+        if max_rows is not None:
+            payload["max_rows"] = max_rows
+        return await self.send_client_message_waiting(
+            "get-task-history",
+            data=payload,
+            expected_server_events="task.history",
+            timeout=timeout,
+        )
+
+    async def get_my_map(
+        self,
+        *,
+        center_sector: int | None = None,
+        bounds: int | None = None,
+        fit_sectors: list[int] | None = None,
+        max_hops: int | None = None,
+        max_sectors: int | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if center_sector is not None:
+            payload["center_sector"] = center_sector
+        if bounds is not None:
+            payload["bounds"] = bounds
+        if fit_sectors:
+            payload["fit_sectors"] = fit_sectors
+        if max_hops is not None:
+            payload["max_hops"] = max_hops
+        if max_sectors is not None:
+            payload["max_sectors"] = max_sectors
+        return await self.send_client_message_waiting(
+            "get-my-map",
+            data=payload,
+            expected_server_events={"map.region", "map.local"},
+            timeout=timeout,
+        )
+
+    async def assign_quest(self, quest_code: str, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "assign-quest",
+            data={"quest_code": quest_code},
+            expected_server_events="quest.status",
+            timeout=timeout,
+        )
+
+    async def claim_step_reward(
+        self,
+        *,
+        quest_id: str,
+        step_id: str,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "claim-step-reward",
+            data={"quest_id": quest_id, "step_id": step_id},
+            expected_server_events={"quest.reward_claimed", "quest.status"},
+            timeout=timeout,
+        )
+
+    async def cancel_task(self, task_id: str, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "cancel-task",
+            data={"task_id": task_id},
+            expected_server_events="task.history",
+            timeout=timeout,
+        )
+
+    async def skip_tutorial(self, *, wait_seconds: float = 0.0) -> dict[str, Any]:
+        send_result = await self.send_client_message("skip-tutorial", {})
+        if wait_seconds > 0:
+            await asyncio.sleep(wait_seconds)
+        return {"sent": send_result}
+
+    async def user_text_input(
+        self,
+        text: str,
+        *,
+        wait_seconds: float = 0.0,
+    ) -> dict[str, Any]:
+        send_result = await self.send_client_message("user-text-input", {"text": text})
+        if wait_seconds > 0:
+            await asyncio.sleep(wait_seconds)
+        return {"sent": send_result}
+
     async def next_event(self, *, timeout: float | None = None) -> dict[str, Any]:
         if timeout is None:
             return await self._events.get()
@@ -226,6 +359,59 @@ class HeadlessBridgeProcess:
             event = await self.next_event(timeout=timeout)
             if event.get("event") == event_name:
                 return event
+
+    async def wait_for_server_event(
+        self,
+        expected_event_names: str | set[str],
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        names = (
+            {expected_event_names}
+            if isinstance(expected_event_names, str)
+            else set(expected_event_names)
+        )
+        stashed: list[dict[str, Any]] = []
+        deadline = None if timeout is None else asyncio.get_running_loop().time() + timeout
+
+        try:
+            while True:
+                remaining = None
+                if deadline is not None:
+                    remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                event = await self.next_event(timeout=remaining)
+
+                if event.get("event") == "error":
+                    message = _event_error_message(event) or "bridge emitted an error event"
+                    raise HeadlessBridgeError(
+                        "wait_for_server_event",
+                        message,
+                        payload=event,
+                        stderr_tail=self.stderr_tail,
+                    )
+
+                server_message = _extract_server_message(event)
+                if server_message is None:
+                    stashed.append(event)
+                    continue
+
+                frame_type = server_message.get("frame_type")
+                if frame_type == "error":
+                    message = _event_error_message(server_message) or "server emitted an error frame"
+                    raise HeadlessBridgeError(
+                        "wait_for_server_event",
+                        message,
+                        payload=event,
+                        stderr_tail=self.stderr_tail,
+                    )
+
+                if frame_type == "event" and server_message.get("event") in names:
+                    return event
+
+                stashed.append(event)
+        finally:
+            for event in stashed:
+                await self._events.put(event)
 
     async def drain_events(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -331,4 +517,18 @@ class HeadlessBridgeProcess:
         self._pending.clear()
 
 
-import contextlib
+def _extract_server_message(event: dict[str, Any]) -> dict[str, Any] | None:
+    if event.get("event") != "server_message":
+        return None
+    data = event.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def _event_error_message(event: dict[str, Any]) -> str | None:
+    error = event.get("error")
+    if isinstance(error, str) and error.strip():
+        return error
+    message = event.get("message")
+    if isinstance(message, str) and message.strip():
+        return message
+    return None

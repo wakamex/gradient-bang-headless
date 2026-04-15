@@ -123,6 +123,88 @@ def build_parser() -> argparse.ArgumentParser:
     session_send_text.add_argument("--content", required=True)
     session_send_text.add_argument("--wait-seconds", type=float, default=0.0)
 
+    session_start = sub.add_parser(
+        "session-start",
+        help="Connect a session, send the start message, and close",
+    )
+    _add_session_connect_args(session_start)
+    session_start.add_argument("--wait-seconds", type=float, default=0.0)
+
+    session_status = sub.add_parser(
+        "session-status",
+        help="Connect a session, request status, and wait for status.snapshot",
+    )
+    _add_session_connect_args(session_status)
+    session_status.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_known_ports = sub.add_parser(
+        "session-known-ports",
+        help="Connect a session, request known ports, and wait for ports.list",
+    )
+    _add_session_connect_args(session_known_ports)
+    session_known_ports.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_task_history = sub.add_parser(
+        "session-task-history",
+        help="Connect a session, request task history, and wait for task.history",
+    )
+    _add_session_connect_args(session_task_history)
+    session_task_history.add_argument("--ship-id")
+    session_task_history.add_argument("--max-rows", type=int)
+    session_task_history.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_map = sub.add_parser(
+        "session-map",
+        help="Connect a session, request map data, and wait for map.region/map.local",
+    )
+    _add_session_connect_args(session_map)
+    session_map.add_argument("--center-sector", type=int)
+    session_map.add_argument("--bounds", type=int)
+    session_map.add_argument("--fit-sector", action="append", dest="fit_sectors", type=int, default=[])
+    session_map.add_argument("--max-hops", type=int)
+    session_map.add_argument("--max-sectors", type=int)
+    session_map.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_assign_quest = sub.add_parser(
+        "session-assign-quest",
+        help="Connect a session, assign a quest, and wait for quest.status",
+    )
+    _add_session_connect_args(session_assign_quest)
+    session_assign_quest.add_argument("--quest-code", required=True)
+    session_assign_quest.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_claim_reward = sub.add_parser(
+        "session-claim-reward",
+        help="Connect a session, claim a step reward, and wait for quest events",
+    )
+    _add_session_connect_args(session_claim_reward)
+    session_claim_reward.add_argument("--quest-id", required=True)
+    session_claim_reward.add_argument("--step-id", required=True)
+    session_claim_reward.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_cancel_task = sub.add_parser(
+        "session-cancel-task",
+        help="Connect a session, cancel a task, and wait for task.history",
+    )
+    _add_session_connect_args(session_cancel_task)
+    session_cancel_task.add_argument("--task-id", required=True)
+    session_cancel_task.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_skip_tutorial = sub.add_parser(
+        "session-skip-tutorial",
+        help="Connect a session, send skip-tutorial, and close",
+    )
+    _add_session_connect_args(session_skip_tutorial)
+    session_skip_tutorial.add_argument("--wait-seconds", type=float, default=0.0)
+
+    session_user_text = sub.add_parser(
+        "session-user-text",
+        help="Connect a session, send user-text-input, and close",
+    )
+    _add_session_connect_args(session_user_text)
+    session_user_text.add_argument("--text", required=True)
+    session_user_text.add_argument("--wait-seconds", type=float, default=0.0)
+
     browser_connect = sub.add_parser(
         "browser-connect",
         help="Open the hosted game client in a browser, log in, and report state",
@@ -520,6 +602,190 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "result": send_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-start":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.session_start(wait_seconds=args.wait_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-status":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-known-ports":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_known_ports(timeout=args.event_timeout_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-task-history":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_task_history(
+                ship_id=args.ship_id,
+                max_rows=args.max_rows,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-map":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_my_map(
+                center_sector=args.center_sector,
+                bounds=args.bounds,
+                fit_sectors=args.fit_sectors or None,
+                max_hops=args.max_hops,
+                max_sectors=args.max_sectors,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-assign-quest":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.assign_quest(
+                args.quest_code,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-claim-reward":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.claim_step_reward(
+                quest_id=args.quest_id,
+                step_id=args.step_id,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-cancel-task":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.cancel_task(
+                args.task_id,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-skip-tutorial":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.skip_tutorial(wait_seconds=args.wait_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-user-text":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                args.text,
+                wait_seconds=args.wait_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
                         "events": await bridge.drain_events(),
                     }
                 )
