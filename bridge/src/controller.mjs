@@ -14,6 +14,7 @@ const { SmallWebRTCTransport } = require("@pipecat-ai/small-webrtc-transport");
 
 redirectConsoleToStderr();
 installNodeWebRtcGlobals();
+installFetchDiagnostics();
 
 const HELP_TEXT = `Usage: node src/controller.mjs
 
@@ -183,6 +184,170 @@ function emitEvent(event, payload = {}) {
   });
 }
 
+function installFetchDiagnostics() {
+  const originalFetch = globalThis.fetch?.bind(globalThis);
+  if (typeof originalFetch !== "function") {
+    return;
+  }
+  if (globalThis.__gradientHeadlessFetchWrapped) {
+    return;
+  }
+
+  globalThis.fetch = async (input, init) => {
+    const url = resolveFetchUrl(input);
+    const method = resolveFetchMethod(input, init);
+    const shouldTrace =
+      typeof url === "string" &&
+      (url.includes("/functions/v1/start") || url.includes("/api/offer"));
+
+    const startedAt = Date.now();
+  if (shouldTrace) {
+      const requestSummary = await summarizeRequestBody(input, init);
+      emitEvent("http_request_started", {
+        method,
+        url,
+        body: requestSummary,
+      });
+    }
+
+    try {
+      const response = await originalFetch(input, init);
+      if (shouldTrace) {
+        const responseSummary = await summarizeResponseBody(response);
+        emitEvent("http_request_completed", {
+          method,
+          url,
+          status: response.status,
+          ok: response.ok,
+          duration_ms: Date.now() - startedAt,
+          body: responseSummary,
+        });
+      }
+      return response;
+    } catch (error) {
+      if (shouldTrace) {
+        emitEvent("http_request_failed", {
+          method,
+          url,
+          duration_ms: Date.now() - startedAt,
+          error: serializeError(error),
+        });
+      }
+      throw error;
+    }
+  };
+  globalThis.__gradientHeadlessFetchWrapped = true;
+}
+
+function resolveFetchUrl(input) {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    return input.url;
+  }
+  return null;
+}
+
+function resolveFetchMethod(input, init) {
+  if (init?.method) {
+    return String(init.method).toUpperCase();
+  }
+  if (typeof Request !== "undefined" && input instanceof Request && input.method) {
+    return String(input.method).toUpperCase();
+  }
+  return "GET";
+}
+
+async function summarizeRequestBody(input, init) {
+  if (typeof init?.body === "string") {
+    return summarizeBodyText(init.body);
+  }
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    try {
+      return summarizeBodyText(await input.clone().text());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function summarizeResponseBody(response) {
+  try {
+    return summarizeBodyText(await response.clone().text());
+  } catch {
+    return null;
+  }
+}
+
+function summarizeBodyText(text) {
+  if (typeof text !== "string" || !text.trim()) {
+    return null;
+  }
+  try {
+    return summarizeJsonPayload(JSON.parse(text));
+  } catch {
+    return {
+      text_length: text.length,
+    };
+  }
+}
+
+function summarizeJsonPayload(value) {
+  if (!value || typeof value !== "object") {
+    return { type: typeof value };
+  }
+
+  const summary = {
+    keys: Object.keys(value).sort(),
+  };
+
+  if (typeof value.type === "string") {
+    summary.type = value.type;
+  }
+  if (typeof value.sessionId === "string") {
+    summary.sessionId = value.sessionId;
+  }
+  if (typeof value.dailyRoom === "string") {
+    summary.dailyRoom = true;
+  }
+  if (typeof value.dailyToken === "string") {
+    summary.dailyToken = true;
+  }
+  if (value.iceConfig && typeof value.iceConfig === "object") {
+    const iceServers = Array.isArray(value.iceConfig.iceServers)
+      ? value.iceConfig.iceServers.length
+      : 0;
+    summary.ice_servers = iceServers;
+  }
+  if (typeof value.sdp === "string") {
+    summary.sdp = summarizeSdp(value.sdp);
+  }
+
+  return summary;
+}
+
+function summarizeSdp(sdp) {
+  const lines = String(sdp).split(/\r?\n/).filter(Boolean);
+  return {
+    length: sdp.length,
+    media: lines.filter((line) => line.startsWith("m=")).slice(0, 8),
+    directions: lines
+      .filter((line) =>
+        line === "a=sendrecv" ||
+        line === "a=recvonly" ||
+        line === "a=sendonly" ||
+        line === "a=inactive"
+      )
+      .slice(0, 12),
+    candidate_count: lines.filter((line) => line.startsWith("a=candidate:")).length,
+  };
+}
+
 function withTimeout(promise, timeoutMs, label) {
   if (!(timeoutMs > 0)) {
     return promise;
@@ -202,6 +367,7 @@ class SmallWebRtcBridge {
     this.client = null;
     this.accessToken = null;
     this.logLevel = LogLevel.INFO;
+    this.lastBotStarted = null;
     this.transportKind = "daily";
   }
 
@@ -210,12 +376,14 @@ class SmallWebRtcBridge {
       return new SmallWebRTCTransport({
         offerUrlTemplate: `${functionsUrl}/start/:sessionId/api/offer`,
         mediaManager: new NoopMediaManager(),
+        waitForICEGathering: true,
       });
     }
 
     return new RawWebRtcTransport({
       functionsUrl,
       accessToken: this.accessToken,
+      emitDiagnostic: (event, payload) => emitEvent(event, payload),
     });
   }
 
@@ -228,7 +396,10 @@ class SmallWebRtcBridge {
         onConnected: () => emitEvent("connected"),
         onDisconnected: () => emitEvent("disconnected"),
         onTransportStateChanged: (state) => emitEvent("transport_state_changed", { state }),
-        onBotStarted: (response) => emitEvent("bot_started", { response }),
+        onBotStarted: (response) => {
+          this.lastBotStarted = response;
+          emitEvent("bot_started", { response });
+        },
         onBotReady: (data) => emitEvent("bot_ready", { data }),
         onBotDisconnected: (participant) =>
           emitEvent("bot_disconnected", { participant: serialize(participant) }),
@@ -264,6 +435,7 @@ class SmallWebRtcBridge {
       }
     }
     this.transportKind = transportKind;
+    this.lastBotStarted = null;
     this.client = this._buildClient(functionsUrl, transportKind);
     return this.client;
   }
@@ -301,30 +473,21 @@ class SmallWebRtcBridge {
         };
       }
 
-      const started = await withTimeout(
-        client.startBot(buildStartRequest(command)),
-        connectTimeoutMs,
-        "start",
-      );
+      const startRequest = buildStartRequest(command);
       const ready = await withTimeout(
         this._awaitConnectReady(
           client,
-          client.connect({
-            ...started,
-            ...(transportKind === "smallwebrtc"
-              ? {
-                  webrtcRequestParams: buildOfferRequest(
-                    command,
-                    requireString(started?.sessionId, "started.sessionId"),
-                  ),
-                }
+          client.startBotAndConnect(
+            transportKind === "smallwebrtc"
+              ? startRequest
               : {
+                  ...startRequest,
                   requestTimeoutMs:
                     typeof command.requestTimeoutMs === "number"
                       ? command.requestTimeoutMs
                       : undefined,
-                }),
-          }),
+                },
+          ),
           connectTimeoutMs,
         ),
         connectTimeoutMs + 1000,
@@ -333,7 +496,7 @@ class SmallWebRtcBridge {
       return {
         mode: "start",
         transport: transportKind,
-        started: serialize(started),
+        started: serialize(this.lastBotStarted),
         ready: serialize(ready),
       };
     } catch (error) {

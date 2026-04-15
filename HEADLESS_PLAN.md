@@ -11,6 +11,25 @@ The intent is not just to scaffold code, but to keep a running record of:
 - what is currently blocked,
 - and what fallback path to take when a transport or API path stalls.
 
+## Active Tasklist
+
+1. Make the bridge follow the website bootstrap path exactly:
+   use `PipecatClient.startBotAndConnect()` for fresh sessions instead of
+   manually splitting `start` and `connect`.
+2. Re-test both public transports against production:
+   - `daily`
+   - `smallwebrtc`
+3. If either transport still stalls, capture the precise phase boundary:
+   - `start` response
+   - offer request and response
+   - datachannel open
+   - outbound `client-ready`
+   - inbound `bot_ready` or server frames
+4. Keep the supported client surface browser-free while adding only the
+   observability needed to explain the live player path.
+5. Convert any newly proven player-surface action into a first-class headless
+   command and document it before using it to advance the live character.
+
 ## Local Vs Live Constraint
 
 There are two different environments, but only one product target:
@@ -106,12 +125,21 @@ Not yet proven:
 Latest narrowing:
 
 - `start` succeeds live
-- the raw Node bridge reaches transport `ready`
+- the bridge now follows the website bootstrap path with `startBotAndConnect()`
+- the raw Node `daily` bridge reaches transport `ready`
+- the raw Node `daily` bridge is now proven to send `client-ready` over the
+  datachannel after connect
+- the raw Node `daily` bridge is now proven to send semantic client messages
+  like `start`, but still receives no inbound Pipecat frames
 - `start --transport smallwebrtc` returns a real `sessionId` plus `iceConfig`
 - official pure-Node `smallwebrtc` still hangs on `/api/offer`
+- `smallwebrtc` was re-tested with `waitForICEGathering=true`, producing a
+  candidate-rich offer, and still received no `/api/offer` response
 - `createDailyRoom=true` sessions answer `/api/offer` and open a datachannel
 - Pipecat app-level frames are still missing on the public path
 - `session-watch` confirms that even explicit `start` messages currently produce no server events
+- bridge failures now include structured HTTP and datachannel diagnostics in the
+  error payload, so transport stalls are inspectable without browser tooling
 
 ### Current Live State
 
@@ -307,10 +335,12 @@ What local server work can still do:
 
 Current next diagnostic:
 
-- identify why the daily-bootstrapped `/api/offer` path opens a datachannel but stays silent
-- identify why the official `smallwebrtc` Node path still never gets an offer
-  response from `/api/offer`
-- determine whether a pure Node Daily transport is practical with additional runtime shims
+- identify why the daily-bootstrapped `/api/offer` path opens a datachannel,
+  sends `client-ready`, and still stays silent
+- identify why the official `smallwebrtc` Node path posts a fully populated
+  offer and still never gets an answer from `/api/offer`
+- compare the proven raw `daily` offer/handshake against the browser-facing
+  `smallwebrtc` offer/handshake at the server expectation level
 
 ### Public Gameplay API Access
 

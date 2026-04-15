@@ -59,14 +59,24 @@ The bridge also supports direct reconnect by existing bot session:
 ## Current Status
 
 - The bridge process, JSON protocol, and Node WebRTC runtime are working.
+- The bridge now uses the same high-level bootstrap shape as the website client:
+  `PipecatClient.startBotAndConnect()`.
 - Production validation reaches transport `ready` in pure Node on the `daily`
   bridge mode.
-- The `daily` bootstrap path uses `start(createDailyRoom=true)` and then raw
-  `/start/{sessionId}/api/offer`.
+- The `daily` path is proven to:
+  - call `/start`
+  - complete `/start/{sessionId}/api/offer`
+  - open the datachannel
+  - send `client-ready`
+  - send semantic client messages such as `start`
+- The `daily` path still does not receive `bot_ready` or gameplay frames from
+  the live server.
 - The `smallwebrtc` bridge mode now uses the same transport package as the
   browser client.
 - The public `smallwebrtc` path still hangs at `/start/{sessionId}/api/offer`
   under pure Node, but now fails on explicit bridge timeouts instead of waiting
   forever.
+- The bridge now emits structured HTTP and raw datachannel diagnostics so failed
+  connects preserve the exact phase boundary in CLI error output.
 - Pipecat app-level frames are still blocked: `bot_ready` and semantic server
   events have not yet been observed on the public path.

@@ -19,10 +19,11 @@ const DEFAULT_ICE_SERVERS = [
 ];
 
 export class RawWebRtcTransport extends Transport {
-  constructor({ functionsUrl, accessToken }) {
+  constructor({ functionsUrl, accessToken, emitDiagnostic = null }) {
     super();
     this.functionsUrl = String(functionsUrl ?? "").replace(/\/+$/, "");
     this.accessToken = String(accessToken ?? "");
+    this.emitDiagnostic = typeof emitDiagnostic === "function" ? emitDiagnostic : null;
     this._state = "disconnected";
     this._requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
     this._iceServers = [...DEFAULT_ICE_SERVERS];
@@ -204,6 +205,7 @@ export class RawWebRtcTransport extends Transport {
         `Message data too large. Max size is ${this._maxMessageSize ?? DEFAULT_MAX_MESSAGE_SIZE}`,
       );
     }
+    this._emitDiagnostic("raw_send_message", { message });
     this._dc.send(JSON.stringify(message));
   }
 
@@ -248,8 +250,12 @@ export class RawWebRtcTransport extends Transport {
     this._dc.addEventListener("message", (event) => {
       this._handleDataChannelMessage(event.data);
     });
+    this._dc.addEventListener("open", () => {
+      this._emitDiagnostic("raw_datachannel_open", {});
+    });
     this._dc.addEventListener("close", () => {
       logger.debug("[RawWebRTC] datachannel closed");
+      this._emitDiagnostic("raw_datachannel_closed", {});
       this._clearKeepAlive();
     });
 
@@ -359,6 +365,7 @@ export class RawWebRtcTransport extends Transport {
     if (!this._dc || this._dc.readyState !== "open") {
       return;
     }
+    this._emitDiagnostic("raw_send_signalling", { message });
     this._dc.send(JSON.stringify({ type: "signalling", message }));
   }
 
@@ -366,6 +373,8 @@ export class RawWebRtcTransport extends Transport {
     if (typeof rawMessage !== "string") {
       return;
     }
+
+    this._emitDiagnostic("raw_receive_datachannel", { raw: rawMessage });
 
     if (rawMessage.startsWith("ping:")) {
       return;
@@ -385,6 +394,13 @@ export class RawWebRtcTransport extends Transport {
     }
 
     if (message?.label === "rtvi-ai" && typeof this._onMessage === "function") {
+      this._emitDiagnostic("raw_receive_rtvi", {
+        message: {
+          id: message.id,
+          type: message.type,
+          data: message.data,
+        },
+      });
       this._onMessage({
         id: message.id,
         type: message.type,
@@ -443,6 +459,10 @@ export class RawWebRtcTransport extends Transport {
       } catch {}
       this._pc = null;
     }
+  }
+
+  _emitDiagnostic(event, payload) {
+    this.emitDiagnostic?.(event, payload);
   }
 }
 

@@ -450,19 +450,22 @@ class HeadlessBridgeProcess:
             response = await asyncio.wait_for(future, timeout=response_timeout)
         except asyncio.TimeoutError as exc:
             self._pending.pop(command_id, None)
+            events = await self.drain_events()
             raise HeadlessBridgeError(
                 operation,
                 f"bridge response timed out after {response_timeout:.1f}s",
+                payload={"events": events},
                 stderr_tail=self.stderr_tail,
             ) from exc
 
         if not response.get("ok"):
             error = response.get("error") or {}
             message = error.get("message") if isinstance(error, dict) else str(error)
+            events = await self.drain_events()
             raise HeadlessBridgeError(
                 operation,
                 message or "bridge command failed",
-                payload=response,
+                payload={"response": response, "events": events},
                 stderr_tail=self.stderr_tail,
             )
 

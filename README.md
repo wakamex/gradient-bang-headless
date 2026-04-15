@@ -139,14 +139,21 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
 - `session-connect --transport daily` uses the current raw Node bridge and is the
   only public mode proven to reach transport `ready`.
+- `session-connect --transport daily` now follows the website bootstrap path
+  with `startBotAndConnect()`, returns the real `bot_started` payload, and
+  emits structured HTTP/datachannel traces.
 - `session-connect --transport smallwebrtc` now uses the official frontend
   `@pipecat-ai/small-webrtc-transport` in pure Node with a no-op media manager.
 - `session-watch` is the fastest way to inspect raw bridge events after connect and after one optional client message.
 - the preferred order is: direct edge-function method, then direct session message.
 - browser-driven gameplay is intentionally not part of the supported client surface in this repo.
 - the current public bridge bootstraps with `start(createDailyRoom=true)` and reaches transport `ready` in pure Node.
+- the current raw `daily` bridge is proven to send `client-ready` and explicit
+  semantic messages like `start`, but the live server still sends no Pipecat
+  frames back on that path.
 - the public `smallwebrtc` bridge path is now wired through the real frontend
-  transport, but it still stalls at `/start/{sessionId}/api/offer` in pure Node.
+  transport, but it still stalls at `/start/{sessionId}/api/offer` in pure
+  Node even after waiting for ICE gathering and sending a candidate-rich offer.
 - Pipecat app-level frames are still blocked: the public bridge does not yet receive `bot_ready` or gameplay server events after connect.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
