@@ -8,7 +8,7 @@ import sys
 from typing import Any
 
 from .browser import BrowserConnectOptions, HeadlessBrowserError, HostedGameBrowserProcess
-from .config import HeadlessConfig
+from .config import HeadlessConfig, update_dotenv
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
 from .http import (
     EventScope,
@@ -50,6 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
     login.add_argument("--email")
     login.add_argument("--password")
     _add_common_config_args(login)
+
+    auth_sync = sub.add_parser(
+        "auth-sync",
+        help="Login and persist runtime auth values into the repo-root .env",
+    )
+    auth_sync.add_argument("--email")
+    auth_sync.add_argument("--password")
+    auth_sync.add_argument("--character-name")
+    auth_sync.add_argument("--character-id")
+    _add_common_config_args(auth_sync)
 
     register = sub.add_parser("register", help="Create an account")
     register.add_argument("--email")
@@ -465,6 +475,50 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             print(dump_json(result))
             return 0
+
+    if args.command == "auth-sync":
+        async with HeadlessApiClient(config) as client:
+            login_result = await client.login(
+                _require_text(args.email, config.email, "email", env_name="GB_EMAIL"),
+                _require_text(args.password, config.password, "password", env_name="GB_PASSWORD"),
+            )
+
+        session = login_result.get("session") if isinstance(login_result, dict) else None
+        access_token = session.get("access_token") if isinstance(session, dict) else None
+        refresh_token = session.get("refresh_token") if isinstance(session, dict) else None
+        if not isinstance(access_token, str) or not access_token:
+            raise HeadlessApiError(
+                "auth-sync",
+                0,
+                "login did not return an access token",
+                payload=login_result,
+            )
+
+        selected_character = _select_login_character(
+            login_result,
+            preferred_character_id=args.character_id,
+            preferred_character_name=args.character_name or config.character_name,
+        )
+        updates: dict[str, str | None] = {
+            "GB_ACCESS_TOKEN": access_token,
+            "GB_REFRESH_TOKEN": refresh_token if isinstance(refresh_token, str) else None,
+        }
+        if selected_character is not None:
+            updates["GB_CHARACTER_ID"] = selected_character["character_id"]
+
+        env_file = update_dotenv(updates)
+        print(
+            dump_json(
+                {
+                    "success": True,
+                    "env_file": str(env_file),
+                    "wrote": sorted(updates.keys()),
+                    "selected_character": selected_character,
+                    "character_count": _count_login_characters(login_result),
+                }
+            )
+        )
+        return 0
 
     if args.command == "register":
         async with HeadlessApiClient(config) as client:
@@ -1385,6 +1439,60 @@ def _require_browser_step_string(step: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise HeadlessBrowserError("browser-sequence", f"step field {key!r} is required")
     return value
+
+
+def _count_login_characters(login_result: dict[str, Any]) -> int:
+    characters = login_result.get("characters")
+    if not isinstance(characters, list):
+        return 0
+    return sum(1 for item in characters if isinstance(item, dict))
+
+
+def _select_login_character(
+    login_result: dict[str, Any],
+    *,
+    preferred_character_id: str | None = None,
+    preferred_character_name: str | None = None,
+) -> dict[str, str] | None:
+    characters_raw = login_result.get("characters")
+    if not isinstance(characters_raw, list):
+        return None
+
+    characters = [
+        item
+        for item in characters_raw
+        if isinstance(item, dict)
+        and isinstance(item.get("character_id"), str)
+        and isinstance(item.get("name"), str)
+    ]
+    if not characters:
+        return None
+
+    if preferred_character_id:
+        for item in characters:
+            if item["character_id"] == preferred_character_id:
+                return {
+                    "character_id": item["character_id"],
+                    "name": item["name"],
+                }
+
+    normalized_name = (preferred_character_name or "").strip().casefold()
+    if normalized_name:
+        for item in characters:
+            if item["name"].strip().casefold() == normalized_name:
+                return {
+                    "character_id": item["character_id"],
+                    "name": item["name"],
+                }
+
+    if len(characters) == 1:
+        item = characters[0]
+        return {
+            "character_id": item["character_id"],
+            "name": item["name"],
+        }
+
+    return None
 
 
 def _parse_json_object(raw: str) -> dict[str, Any]:

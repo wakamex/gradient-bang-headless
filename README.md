@@ -51,6 +51,7 @@ values directly:
 - `GB_CHARACTER_NAME`: default character name for bootstrap and hosted-client flows
 - `GB_API_TOKEN`: trusted gameplay token for protected edge functions
 - `GB_ACCESS_TOKEN`: Supabase access token returned by `login`
+- `GB_REFRESH_TOKEN`: Supabase refresh token returned by `login`
 - `GB_CHARACTER_ID`: default player character for gameplay calls
 - `GB_ACTOR_CHARACTER_ID`: optional corp-member actor when driving corp ships
 
@@ -58,8 +59,10 @@ values directly:
 
 ```bash
 gb-headless login
+gb-headless auth-sync
 gb-headless register
 gb-headless login --email you@example.com --password 'secret'
+gb-headless auth-sync --character-name "$GB_CHARACTER_NAME"
 gb-headless register --email you@example.com --password 'secret'
 gb-headless confirm-url --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
 gb-headless character-list --access-token "$GB_ACCESS_TOKEN"
@@ -128,6 +131,10 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   hand-written `session-message` payloads.
 - `.env` values are used automatically for login/browser defaults, so the
   shortest commands can omit repeated credentials.
+- `auth-sync` is the shortest way to populate runtime auth state in `.env`:
+  it logs in, writes `GB_ACCESS_TOKEN` and `GB_REFRESH_TOKEN`, and writes
+  `GB_CHARACTER_ID` when it can select a character by configured name or
+  by a single-character account.
 - `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.
 - `game-call` auto-injects `character_id` and `actor_character_id` when configured.
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.

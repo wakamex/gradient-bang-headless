@@ -93,6 +93,7 @@ Current expected variables include:
 - `GB_CHARACTER_NAME`
 - `GB_API_TOKEN`
 - `GB_ACCESS_TOKEN`
+- `GB_REFRESH_TOKEN`
 - `GB_CHARACTER_ID`
 - `GB_ACTOR_CHARACTER_ID`
 

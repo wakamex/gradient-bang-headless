@@ -24,6 +24,7 @@ These flows have already been proven live:
 - `register`
 - email confirmation through Supabase verify URLs
 - `login`
+- `auth-sync`
 - `user_character_create`
 - `user_character_list`
 - `start`
@@ -39,6 +40,7 @@ Implemented and production-proven:
 - account registration
 - email verification URL resolution
 - login
+- `.env` runtime auth sync through `auth-sync`
 - character creation
 - character visibility polling
 - session creation through `/start`
