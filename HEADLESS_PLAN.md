@@ -98,6 +98,11 @@ Newest runner hardening:
 - hosted-browser connect now distinguishes initial shell paint from actual interactive readiness
 - command submission now targets the enabled command field instead of the first input on the page
 
+Newest long-task support:
+
+- a watch mode can now keep a session open and poll status while a local task runs
+- long-running travel or trading objectives no longer require repeated prompt spam just to observe completion
+
 ## Planned Commit Sequence
 
 ### 1. Plan And Feature Ledger
@@ -201,6 +206,19 @@ Commit scope:
 Success condition:
 
 - browser-driven command loops no longer race the hosted client boot sequence
+
+### 9. Long-Running Task Watch
+
+Commit scope:
+
+- add a `browser-command-watch` CLI action
+- send one command, then poll browser status until the local task engine settles
+- record intermediate snapshots for inspection
+
+Success condition:
+
+- long contract steps like travel or trading can be observed to completion
+  without reissuing the same command every minute
 
 ## Definition Of “As Far As Possible”
 
