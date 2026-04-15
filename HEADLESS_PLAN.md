@@ -69,6 +69,22 @@ Not yet proven:
 - Pipecat `bot_ready`
 - transport-level command exchange after WebRTC connect
 
+### Hosted Browser Runtime
+
+Proven live against production:
+
+- headless Chromium can load `https://game.gradient-bang.com/`
+- UI login works with a real account
+- character selection works through the hosted client
+- the live hosted client reaches in-game state and Pipecat `bot_ready`
+- the command input is present in the rendered game shell
+- live command submission through the hosted client works
+
+Still being pushed:
+
+- deterministic tutorial skip behavior
+- higher-level gameplay automation on top of the hosted client
+
 ## Planned Commit Sequence
 
 ### 1. Plan And Feature Ledger
@@ -127,13 +143,13 @@ Success condition:
 
 Commit scope:
 
-- only if pure Node remains stalled
-- implement a browser-hosted bridge that preserves the same JSON protocol
-- keep mic/camera logically off; use the browser only for transport/runtime
+- implement a browser-hosted runner that preserves the same JSON protocol
+- drive the live hosted client through login, character selection, and in-game state
+- use the browser runtime when pure Node transport stalls
 
 Success condition:
 
-- reach `bot_ready` and begin sending headless game actions over the session
+- reach `bot_ready` and begin issuing headless actions through the hosted client
 
 ## Definition Of “As Far As Possible”
 
@@ -179,6 +195,6 @@ surface over direct edge-function gameplay calls.
 
 ## Immediate Next Step
 
-Keep pushing transport reachability with the new Python/CLI bridge integration,
-then add first-class session action helpers and continue testing production
-paths until the next real blocker is isolated.
+Wire the proven hosted-browser path into the CLI, then keep pushing live
+control actions like tutorial skip, contracts lookup, and navigation until the
+next real blocker is isolated.

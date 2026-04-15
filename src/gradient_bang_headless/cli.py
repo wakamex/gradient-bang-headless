@@ -6,6 +6,7 @@ import json
 import sys
 from typing import Any
 
+from .browser import BrowserConnectOptions, HeadlessBrowserError, HostedGameBrowserProcess
 from .config import HeadlessConfig
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
 from .http import (
@@ -27,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(dispatch(args))
     except KeyboardInterrupt:
         return 130
-    except (HeadlessApiError, HeadlessBridgeError) as exc:
+    except (HeadlessApiError, HeadlessBridgeError, HeadlessBrowserError) as exc:
         print(str(exc), file=sys.stderr)
         payload = getattr(exc, "payload", None)
         if payload is not None:
@@ -119,6 +120,32 @@ def build_parser() -> argparse.ArgumentParser:
     session_send_text.add_argument("--content", required=True)
     session_send_text.add_argument("--wait-seconds", type=float, default=0.0)
 
+    browser_connect = sub.add_parser(
+        "browser-connect",
+        help="Open the hosted game client in a browser, log in, and report state",
+    )
+    _add_browser_connect_args(browser_connect)
+
+    browser_command = sub.add_parser(
+        "browser-command",
+        help="Open the hosted game client in a browser, send one command, and close",
+    )
+    _add_browser_connect_args(browser_command)
+    browser_command.add_argument("--text", required=True)
+    browser_command.add_argument("--input-timeout-ms", type=int, default=180_000)
+    browser_command.add_argument("--wait-after-ms", type=int, default=15_000)
+    browser_command.add_argument("--skip-input-wait", action="store_true")
+
+    browser_click = sub.add_parser(
+        "browser-click",
+        help="Open the hosted game client in a browser, click one button, and close",
+    )
+    _add_browser_connect_args(browser_click)
+    browser_click.add_argument("--label", required=True)
+    browser_click.add_argument("--timeout-ms", type=int, default=120_000)
+    browser_click.add_argument("--wait-after-ms", type=int, default=5_000)
+    browser_click.add_argument("--force", action="store_true")
+
     call = sub.add_parser("call", help="Generic edge-function call")
     call.add_argument("endpoint")
     call.add_argument("--method", default="POST", choices=["GET", "POST"])
@@ -179,6 +206,19 @@ def _add_session_connect_args(parser: argparse.ArgumentParser) -> None:
         default="none",
     )
     _add_start_options(parser)
+    _add_common_config_args(parser)
+
+
+def _add_browser_connect_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--site-url", default="https://game.gradient-bang.com/")
+    parser.add_argument("--email", required=True)
+    parser.add_argument("--password", required=True)
+    parser.add_argument("--character-name", required=True)
+    parser.add_argument("--headful", action="store_true")
+    parser.add_argument("--connect-timeout-ms", type=int, default=120_000)
+    parser.add_argument("--post-connect-wait-ms", type=int, default=0)
+    parser.add_argument("--body-text-limit", type=int, default=4_000)
+    parser.add_argument("--log-console", action="store_true")
     _add_common_config_args(parser)
 
 
@@ -312,6 +352,61 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "browser-connect":
+        async with HostedGameBrowserProcess(config) as browser:
+            result = await browser.connect(_browser_connect_options_from_args(args))
+            print(
+                dump_json(
+                    {
+                        "connect": result,
+                        "events": await browser.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "browser-command":
+        async with HostedGameBrowserProcess(config) as browser:
+            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            command_result = await browser.send_command(
+                args.text,
+                wait_after_ms=args.wait_after_ms,
+                wait_for_input_enabled=not args.skip_input_wait,
+                input_timeout_ms=args.input_timeout_ms,
+                body_text_limit=args.body_text_limit,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": command_result,
+                        "events": await browser.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "browser-click":
+        async with HostedGameBrowserProcess(config) as browser:
+            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            click_result = await browser.click_button(
+                args.label,
+                wait_after_ms=args.wait_after_ms,
+                timeout_ms=args.timeout_ms,
+                force=args.force,
+                body_text_limit=args.body_text_limit,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": click_result,
+                        "events": await browser.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "call":
         async with HeadlessApiClient(config) as client:
             result = await client.request(
@@ -413,6 +508,20 @@ def _session_connect_options_from_args(
         voice_id=args.voice_id,
         personality_tone=args.personality_tone,
         character_name=args.character_name,
+    )
+
+
+def _browser_connect_options_from_args(args: argparse.Namespace) -> BrowserConnectOptions:
+    return BrowserConnectOptions(
+        email=args.email,
+        password=args.password,
+        character_name=args.character_name,
+        site_url=args.site_url,
+        headless=not args.headful,
+        connect_timeout_ms=args.connect_timeout_ms,
+        post_connect_wait_ms=args.post_connect_wait_ms,
+        body_text_limit=args.body_text_limit,
+        log_console=args.log_console,
     )
 
 
