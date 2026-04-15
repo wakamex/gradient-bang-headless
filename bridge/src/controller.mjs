@@ -4,12 +4,11 @@ import { createRequire } from "node:module";
 import process from "node:process";
 import readline from "node:readline";
 
-import { NoopMediaManager } from "./noop_media_manager.mjs";
+import { RawWebRtcTransport } from "./raw_transport.mjs";
 import { installNodeWebRtcGlobals } from "./runtime.mjs";
 
 const require = createRequire(import.meta.url);
 const { LogLevel, PipecatClient } = require("@pipecat-ai/client-js");
-const { SmallWebRTCTransport } = require("@pipecat-ai/small-webrtc-transport");
 
 redirectConsoleToStderr();
 installNodeWebRtcGlobals();
@@ -80,20 +79,13 @@ function buildStartRequest(command) {
     headers: authHeaders(command.accessToken),
     timeout: typeof command.requestTimeoutMs === "number" ? command.requestTimeoutMs : undefined,
     requestData: {
-      createDailyRoom: false,
-      enableDefaultIceServers: true,
+      createDailyRoom: true,
+      dailyRoomProperties: {
+        start_video_off: true,
+        eject_at_room_exp: true,
+      },
       body,
     },
-  };
-}
-
-function buildOfferRequest(command) {
-  const functionsUrl = normalizeFunctionsUrl(command.functionsUrl);
-  const sessionId = requireString(command.sessionId, "sessionId");
-  return {
-    endpoint: `${functionsUrl}/start/${sessionId}/api/offer`,
-    headers: authHeaders(command.accessToken),
-    timeout: typeof command.requestTimeoutMs === "number" ? command.requestTimeoutMs : undefined,
   };
 }
 
@@ -174,14 +166,15 @@ function withTimeout(promise, timeoutMs, label) {
 class SmallWebRtcBridge {
   constructor() {
     this.client = null;
+    this.accessToken = null;
     this.logLevel = LogLevel.INFO;
   }
 
   _buildClient(functionsUrl) {
     const client = new PipecatClient({
-      transport: new SmallWebRTCTransport({
-        mediaManager: new NoopMediaManager(),
-        offerUrlTemplate: `${functionsUrl}/start/:sessionId/api/offer`,
+      transport: new RawWebRtcTransport({
+        functionsUrl,
+        accessToken: this.accessToken,
       }),
       enableMic: false,
       enableCam: false,
@@ -230,32 +223,50 @@ class SmallWebRtcBridge {
 
   async connect(command) {
     const functionsUrl = normalizeFunctionsUrl(command.functionsUrl);
+    this.accessToken = requireString(command.accessToken, "accessToken");
     const client = await this._replaceClient(functionsUrl);
     const connectTimeoutMs =
       typeof command.connectTimeoutMs === "number" ? command.connectTimeoutMs : 20000;
 
     try {
       if (command.sessionId) {
-        const ready = await withTimeout(
-          client.connect({
-            webrtcRequestParams: buildOfferRequest(command),
-          }),
-          connectTimeoutMs,
-          "connect",
-        );
+        const connectPromise = client.connect({
+            sessionId: requireString(command.sessionId, "sessionId"),
+            requestTimeoutMs:
+              typeof command.requestTimeoutMs === "number"
+                ? command.requestTimeoutMs
+                : undefined,
+          });
+        const ready = await this._awaitConnectReady(client, connectPromise, connectTimeoutMs);
         return {
           mode: "session",
           ready: serialize(ready),
         };
       }
 
-      const ready = await withTimeout(
-        client.startBotAndConnect(buildStartRequest(command)),
+      const started = await withTimeout(
+        client.startBot(buildStartRequest(command)),
         connectTimeoutMs,
+        "start",
+      );
+      const ready = await withTimeout(
+        this._awaitConnectReady(
+          client,
+          client.connect({
+          ...started,
+          requestTimeoutMs:
+            typeof command.requestTimeoutMs === "number"
+              ? command.requestTimeoutMs
+              : undefined,
+          }),
+          connectTimeoutMs,
+        ),
+        connectTimeoutMs + 1000,
         "connect",
       );
       return {
         mode: "start",
+        started: serialize(started),
         ready: serialize(ready),
       };
     } catch (error) {
@@ -266,6 +277,30 @@ class SmallWebRtcBridge {
           message: "disconnect after connect failure failed",
           error: serializeError(disconnectError),
         });
+      }
+      throw error;
+    }
+  }
+
+  async _awaitConnectReady(client, connectPromise, connectTimeoutMs) {
+    try {
+      return await Promise.race([
+        withTimeout(connectPromise, connectTimeoutMs, "connect"),
+        waitForClientState(client, "ready", connectTimeoutMs).then(() => ({
+          bot_ready_timeout: true,
+          transport_state: client.state,
+        })),
+      ]);
+    } catch (error) {
+      if (client.state === "ready") {
+        emitEvent("bridge_warning", {
+          message: "bot_ready did not arrive before timeout; continuing with ready transport",
+          error: serializeError(error),
+        });
+        return {
+          bot_ready_timeout: true,
+          transport_state: client.state,
+        };
       }
       throw error;
     }
@@ -342,6 +377,17 @@ class SmallWebRtcBridge {
   }
 }
 
+async function waitForClientState(client, expectedState, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (client.state === expectedState) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`state ${expectedState} not reached before timeout`);
+}
+
 async function main(argv) {
   if (argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write(`${HELP_TEXT}\n`);
@@ -351,7 +397,7 @@ async function main(argv) {
   const bridge = new SmallWebRtcBridge();
   emitEvent("bridge_ready", {
     protocol_version: 1,
-    transport: "smallwebrtc",
+    transport: "webrtc",
   });
 
   const rl = readline.createInterface({

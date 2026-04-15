@@ -58,13 +58,13 @@ These are not the public path for a player-distributed headless client.
 
 In progress:
 
-- `smallwebrtc` bridge process in Node
+- raw WebRTC bridge process in Node
 - JSON-lines bridge protocol
 - Node WebRTC globals via `@roamhq/wrtc`
 - Python wrapper for the bridge process
 - CLI session commands for bridge-driven connect/request/message/text flows
 - production path reaches:
-  `start -> /start/{sessionId}/api/offer -> connecting`
+  `start -> /start/{sessionId}/api/offer -> ready`
 
 Not yet proven:
 
@@ -74,9 +74,10 @@ Not yet proven:
 Latest narrowing:
 
 - `start` succeeds live
-- the Node bridge receives a real `sessionId` and ICE config
-- the pure Node path stalls after `/start/{sessionId}/api/offer`
-- the remaining work is transport-level, not control-plane or auth
+- the raw Node bridge reaches transport `ready`
+- `createDailyRoom=false` sessions still hang on `/api/offer`
+- `createDailyRoom=true` sessions answer `/api/offer` and open a datachannel
+- Pipecat app-level frames are still missing on the public path
 
 ## Planned Commit Sequence
 
@@ -128,7 +129,7 @@ Success condition:
 
 Commit scope:
 
-- keep pushing pure Node `smallwebrtc`
+- keep pushing pure Node public WebRTC transport
 - instrument `api/offer` behavior
 - tighten timeout and failure reporting around the offer phase
 - compare request shape against the successful browser transport when needed
@@ -170,25 +171,25 @@ If a phase is blocked, the next commit should improve one of:
 
 ## Current Blockers
 
-### Pure Node `smallwebrtc` Stall
+### Pure Node Public Session Stall
 
 Observed production behavior:
 
 - `start` succeeds
-- `/start/{sessionId}/api/offer` request is issued
-- transport reaches `connecting`
-- `bot_ready` never arrives under the pure Node path
+- `createDailyRoom=false` sessions hang at `/start/{sessionId}/api/offer`
+- `createDailyRoom=true` sessions reach transport `ready`
+- `bot_ready` and gameplay server events still do not arrive on the public path
 
 Current mitigation:
 
 - bridge-level `connectTimeoutMs`
 - bridge-level `requestTimeoutMs`
-- clean disconnect on timeout
+- transport-ready fallback when `bot_ready` does not arrive
 
 Current next diagnostic:
 
-- replace the current transport library usage with a minimal raw Node WebRTC path
-- keep the request/response semantics at the Pipecat client boundary
+- identify why the daily-bootstrapped `/api/offer` path opens a datachannel but stays silent
+- determine whether pure Node Daily transport is practical with additional runtime shims
 
 ### Public Gameplay API Access
 
@@ -201,5 +202,5 @@ surface over direct edge-function gameplay calls.
 
 1. replace generic gameplay calls with named edge-function methods and CLI commands
 2. keep the supported client surface browser-free
-3. replace the SmallWebRTC transport internals with a minimal Node path
+3. keep pushing the pure Node public transport until it emits real Pipecat frames
 4. keep pushing the live character forward and record each newly proven capability

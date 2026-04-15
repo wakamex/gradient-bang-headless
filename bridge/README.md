@@ -1,15 +1,14 @@
 # Bridge Runtimes
 
-This package contains the pure Node `smallwebrtc` bridge used by the headless
+This package contains the pure Node WebRTC bridge used by the headless
 client for direct Pipecat transport work.
 
-## SmallWebRTC Bridge
+## Node WebRTC Bridge
 
-The `smallwebrtc` bridge is a text-first Node runtime for the production
-Pipecat transport.
+The bridge is a text-first Node runtime for the production Pipecat transport.
 
-It intentionally skips microphone and camera capture by using a no-op media
-manager. That keeps the direct transport path focused on:
+It intentionally skips microphone and camera capture. That keeps the direct
+transport path focused on:
 
 - session creation via `POST /start`
 - session reconnect via `/start/{sessionId}/api/offer`
@@ -54,7 +53,8 @@ The bridge also supports direct reconnect by existing bot session:
 ## Current Status
 
 - The bridge process, JSON protocol, and Node WebRTC runtime are working.
-- Production validation reaches:
-  `start -> /start/{sessionId}/api/offer -> connecting`
-- The pure Node transport does not yet reach Pipecat `bot_ready`; use
-  `connectTimeoutMs` so callers fail cleanly instead of hanging forever.
+- Production validation reaches transport `ready` in pure Node.
+- The current bootstrap path uses `start(createDailyRoom=true)` and then raw
+  `/start/{sessionId}/api/offer`.
+- Pipecat app-level frames are still blocked: `bot_ready` and semantic server
+  events have not yet been observed on the public path.

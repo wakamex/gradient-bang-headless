@@ -6,7 +6,7 @@ This repo is the home for a headless client and automation tooling for Gradient 
 
 - `upstream/`: game core submodule, pinned to `git@github.com:wakamex/gradient-bang.git`
 - `src/gradient_bang_headless/`: headless client scaffold
-- `bridge/`: pure Node SmallWebRTC bridge for Pipecat transport
+- `bridge/`: pure Node WebRTC bridge for Pipecat transport
 
 ## Current Scope
 
@@ -16,8 +16,8 @@ This scaffold supports:
 - named protected gameplay calls for trusted use
 - generic edge-function calls against `https://api.gradient-bang.com/functions/v1`
 - `events_since` polling for request/event correlation
-- a text-first Node SmallWebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
-- Python/CLI bridge integration for `smallwebrtc` session connect/request/message flows
+- a text-first raw Node WebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
+- Python/CLI bridge integration for session connect/request/message flows
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -124,7 +124,8 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
 - the preferred order is: direct edge-function method, then direct session message.
 - browser-driven gameplay is intentionally not part of the supported client surface in this repo.
-- the pure Node `smallwebrtc` path currently reaches `/start/{sessionId}/api/offer` and then stalls before `bot_ready`.
+- the current public bridge bootstraps with `start(createDailyRoom=true)` and reaches transport `ready` in pure Node.
+- Pipecat app-level frames are still blocked: the public bridge does not yet receive `bot_ready` or gameplay server events after connect.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
 - `signup-and-start` is a practical two-pass CLI flow:
