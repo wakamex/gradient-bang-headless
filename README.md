@@ -6,7 +6,7 @@ This repo is the home for a headless client and automation tooling for Gradient 
 
 - `upstream/`: game core submodule, pinned to `git@github.com:wakamex/gradient-bang.git`
 - `src/gradient_bang_headless/`: headless client scaffold
-- `bridge/`: pure Node WebRTC bridge for Pipecat transport
+- `bridge/`: session transport runtimes for Pipecat, with browser-backed Daily as the live path
 
 ## Current Scope
 
@@ -17,8 +17,12 @@ This scaffold supports:
 - named protected gameplay calls for trusted use
 - generic edge-function calls against `https://api.gradient-bang.com/functions/v1`
 - `events_since` polling for request/event correlation
-- a text-first Node WebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
-- Python/CLI bridge integration for session connect/request/message flows
+- a production-proven browser-backed Daily bridge in [bridge/README.md](/code/gradient/bridge/README.md)
+- raw Node `daily` and `smallwebrtc` diagnostic bridge modes
+- Python/CLI bridge integration for session connect/request/message/text flows
+- first-class live session reads for status, ports, map, chat history, ship lists, ship definitions, corporation data, task events, and quest status
+- exact frontend prompt contracts for trade orders and ship purchase requests
+- a reusable `loop` runner for long bot-driven objectives with state polling and reprompts
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -73,6 +77,10 @@ gb-headless session-connect --character-id "$GB_CHARACTER_ID" --access-token "$G
 gb-headless session-connect \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
+  --transport rawdaily
+gb-headless session-connect \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
   --transport smallwebrtc \
   --connect-timeout-ms 8000
 gb-headless session-request \
@@ -93,6 +101,36 @@ gb-headless session-status \
 gb-headless session-known-ports \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-chat-history \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-ships \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-ship-definitions \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-quest-status \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-trade-order \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --trade-type buy \
+  --commodity neuro_symbolics \
+  --quantity 20 \
+  --price-per-unit 30
+gb-headless session-purchase-ship \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --ship-display-name "Kestrel Courier" \
+  --replace-ship-id "<current-ship-id>" \
+  --replace-ship-name "Sparrow Scout"
+gb-headless loop \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --target-sector 1413 \
+  --objective 'Proceed directly to sector 1413 and stop.'
 gb-headless session-assign-quest \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -121,11 +159,19 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `quest-status`, `quest-assign`, and `quest-claim-reward` are the preferred
   trusted gameplay commands over raw `game-call`.
 - `session-status`, `session-known-ports`, `session-task-history`,
-  `session-map`, `session-assign-quest`, `session-claim-reward`,
-  `session-cancel-task`, `session-skip-tutorial`, `session-user-text`, and
-  `session-watch`
+  `session-task-events`, `session-map`, `session-chat-history`,
+  `session-ships`, `session-ship-definitions`, `session-corporation`,
+  `session-quest-status`, `session-assign-quest`, `session-claim-reward`,
+  `session-cancel-task`, `session-skip-tutorial`, `session-user-text`,
+  `session-trade-order`, `session-purchase-ship`, and `session-watch`
   follow the frontend's real message -> event pattern and are preferred over
   hand-written `session-message` payloads.
+- `session-trade-order`, `session-purchase-ship`, and
+  `session-purchase-corp-ship` send the exact strings the upstream React
+  client builds in `TradePanel.tsx` and `ShipDetails.tsx`.
+- `loop` is the supported path for bot-driven gameplay. It polls
+  `status.snapshot`, tracks quest state, and reprompts on idle instead of
+  relying on one-off shell snippets.
 - `.env` values are used automatically for login/session defaults, so the
   shortest commands can omit repeated credentials.
 - `auth-sync` is the shortest way to populate runtime auth state in `.env`:
@@ -135,26 +181,24 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.
 - `game-call` auto-injects `character_id` and `actor_character_id` when configured.
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.
-- the Node bridge is text-first: it skips mic/camera capture, but still needs Node WebRTC support through `@roamhq/wrtc`.
-- `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
-- `session-connect --transport daily` uses the current raw Node bridge and is the
-  only public mode proven to reach transport `ready`.
-- `session-connect --transport daily` now follows the website bootstrap path
-  with `startBotAndConnect()`, returns the real `bot_started` payload, and
-  emits structured HTTP/datachannel traces.
-- `session-connect --transport smallwebrtc` now uses the official frontend
-  `@pipecat-ai/small-webrtc-transport` in pure Node with a no-op media manager.
+- the default `daily` transport is browser-backed official Daily through
+  Playwright Chromium. It follows the website bootstrap path exactly and is the
+  only public mode proven end-to-end against production.
+- `rawdaily` is the old raw Node Daily path and is now diagnostic only.
+- `smallwebrtc` still uses the official frontend
+  `@pipecat-ai/small-webrtc-transport` in pure Node, but remains diagnostic.
+- `session-connect`, `session-request`, `session-message`, `session-send-text`,
+  and all named session commands use the same bridge machinery from the
+  `gb-headless` CLI.
 - `session-watch` is the fastest way to inspect raw bridge events after connect and after one optional client message.
 - the preferred order is: direct edge-function method, then direct session message.
 - browser-driven gameplay is intentionally not part of the supported client surface in this repo.
-- the current public bridge bootstraps with `start(createDailyRoom=true)` and reaches transport `ready` in pure Node.
-- the current raw `daily` bridge is proven to send `client-ready` and explicit
-  semantic messages like `start`, but the live server still sends no Pipecat
-  frames back on that path.
-- the public `smallwebrtc` bridge path is now wired through the real frontend
-  transport, but it still stalls at `/start/{sessionId}/api/offer` in pure
-  Node even after waiting for ICE gathering and sending a candidate-rich offer.
-- Pipecat app-level frames are still blocked: the public bridge does not yet receive `bot_ready` or gameplay server events after connect.
+- the live `daily` path is now proven to reach `bot_ready` and receive gameplay
+  frames such as `status.snapshot`, `quest.status`, `map.local`, `ports.list`,
+  `chat.history`, `ships.list`, and `ship.definitions`.
+- the remaining blocker is control quality on long bot-driven loops, not
+  transport reachability. The bot can still stall or drift on trading
+  objectives even when the session surface is healthy.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
 - `signup-and-start` is a practical two-pass CLI flow:

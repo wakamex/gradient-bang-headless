@@ -8,6 +8,11 @@ from typing import Any
 
 from .config import HeadlessConfig, update_dotenv
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
+from .frontend_prompts import (
+    build_corporation_ship_purchase_prompt,
+    build_ship_purchase_prompt,
+    build_trade_order_prompt,
+)
 from .http import (
     EventScope,
     HeadlessApiClient,
@@ -15,6 +20,7 @@ from .http import (
     StartOptions,
     dump_json,
 )
+from .session_loop import LoopTargets, SessionLoopOptions, SessionLoopRunner
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -106,13 +112,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     session_connect = sub.add_parser(
         "session-connect",
-        help="Open a SmallWebRTC session through the Node bridge and report connect state",
+        help="Open a session transport through the Node bridge and report connect state",
     )
     _add_session_connect_args(session_connect)
 
     session_request = sub.add_parser(
         "session-request",
-        help="Connect a SmallWebRTC session, send one client request, and close",
+        help="Connect a session transport, send one client request, and close",
     )
     _add_session_connect_args(session_request)
     session_request.add_argument("--message-type", required=True)
@@ -121,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     session_message = sub.add_parser(
         "session-message",
-        help="Connect a SmallWebRTC session, send one client message, and close",
+        help="Connect a session transport, send one client message, and close",
     )
     _add_session_connect_args(session_message)
     session_message.add_argument("--message-type", required=True)
@@ -130,7 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     session_send_text = sub.add_parser(
         "session-send-text",
-        help="Connect a SmallWebRTC session, send text to the bot, and close",
+        help="Connect a session transport, send text to the bot, and close",
     )
     _add_session_connect_args(session_send_text)
     session_send_text.add_argument("--content", required=True)
@@ -166,6 +172,16 @@ def build_parser() -> argparse.ArgumentParser:
     session_task_history.add_argument("--max-rows", type=int)
     session_task_history.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
+    session_task_events = sub.add_parser(
+        "session-task-events",
+        help="Connect a session, request task events, and wait for event.query",
+    )
+    _add_session_connect_args(session_task_events)
+    session_task_events.add_argument("--task-id", required=True)
+    session_task_events.add_argument("--cursor")
+    session_task_events.add_argument("--max-rows", type=int)
+    session_task_events.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
     session_map = sub.add_parser(
         "session-map",
         help="Connect a session, request map data, and wait for map.region/map.local",
@@ -177,6 +193,43 @@ def build_parser() -> argparse.ArgumentParser:
     session_map.add_argument("--max-hops", type=int)
     session_map.add_argument("--max-sectors", type=int)
     session_map.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_chat_history = sub.add_parser(
+        "session-chat-history",
+        help="Connect a session, request chat history, and wait for chat.history",
+    )
+    _add_session_connect_args(session_chat_history)
+    session_chat_history.add_argument("--since-hours", type=int)
+    session_chat_history.add_argument("--max-rows", type=int)
+    session_chat_history.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_ships = sub.add_parser(
+        "session-ships",
+        help="Connect a session, request owned ships, and wait for ships.list",
+    )
+    _add_session_connect_args(session_ships)
+    session_ships.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_ship_definitions = sub.add_parser(
+        "session-ship-definitions",
+        help="Connect a session, request ship definitions, and wait for ship.definitions",
+    )
+    _add_session_connect_args(session_ship_definitions)
+    session_ship_definitions.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_corporation = sub.add_parser(
+        "session-corporation",
+        help="Connect a session, request corporation data, and wait for corporation.data/corporation_info",
+    )
+    _add_session_connect_args(session_corporation)
+    session_corporation.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_quest_status = sub.add_parser(
+        "session-quest-status",
+        help="Connect a session and wait for the next quest.status event",
+    )
+    _add_session_connect_args(session_quest_status)
+    session_quest_status.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
     session_assign_quest = sub.add_parser(
         "session-assign-quest",
@@ -218,6 +271,39 @@ def build_parser() -> argparse.ArgumentParser:
     session_user_text.add_argument("--text", required=True)
     session_user_text.add_argument("--wait-seconds", type=float, default=0.0)
 
+    session_trade_order = sub.add_parser(
+        "session-trade-order",
+        help="Connect a session and send the exact website trade-order prompt",
+    )
+    _add_session_connect_args(session_trade_order)
+    session_trade_order.add_argument("--trade-type", required=True, choices=["buy", "sell"])
+    session_trade_order.add_argument(
+        "--commodity",
+        required=True,
+        choices=["quantum_foam", "retro_organics", "neuro_symbolics"],
+    )
+    session_trade_order.add_argument("--quantity", required=True, type=int)
+    session_trade_order.add_argument("--price-per-unit", required=True, type=int)
+    session_trade_order.add_argument("--wait-seconds", type=float, default=0.0)
+
+    session_purchase_ship = sub.add_parser(
+        "session-purchase-ship",
+        help="Connect a session and send the exact website ship purchase prompt",
+    )
+    _add_session_connect_args(session_purchase_ship)
+    session_purchase_ship.add_argument("--ship-display-name", required=True)
+    session_purchase_ship.add_argument("--replace-ship-id", required=True)
+    session_purchase_ship.add_argument("--replace-ship-name", required=True)
+    session_purchase_ship.add_argument("--wait-seconds", type=float, default=0.0)
+
+    session_purchase_corp_ship = sub.add_parser(
+        "session-purchase-corp-ship",
+        help="Connect a session and send the exact website corporation ship purchase prompt",
+    )
+    _add_session_connect_args(session_purchase_corp_ship)
+    session_purchase_corp_ship.add_argument("--ship-display-name", required=True)
+    session_purchase_corp_ship.add_argument("--wait-seconds", type=float, default=0.0)
+
     session_watch = sub.add_parser(
         "session-watch",
         help="Connect a session, optionally send one client message, wait, and dump raw events",
@@ -226,6 +312,27 @@ def build_parser() -> argparse.ArgumentParser:
     session_watch.add_argument("--message-type")
     session_watch.add_argument("--data", default="{}")
     session_watch.add_argument("--duration-seconds", type=float, default=10.0)
+
+    loop = sub.add_parser(
+        "loop",
+        aliases=["session-loop"],
+        help="Drive a bot objective over the live player session with status checks and reprompts",
+    )
+    _add_session_connect_args(loop)
+    loop.add_argument("--objective", required=True)
+    loop.add_argument("--bootstrap-timeout-seconds", type=float, default=10.0)
+    loop.add_argument("--duration-seconds", type=float, default=300.0)
+    loop.add_argument("--forever", action="store_true")
+    loop.add_argument("--no-start", action="store_true")
+    loop.add_argument("--status-interval-seconds", type=float, default=20.0)
+    loop.add_argument("--idle-reprompt-seconds", type=float, default=45.0)
+    loop.add_argument("--max-reprompts", type=int, default=2)
+    loop.add_argument("--reprompt-prefix", default="Continue the current objective and act on it:")
+    loop.add_argument("--target-credits", type=int)
+    loop.add_argument("--target-sector", type=int)
+    loop.add_argument("--target-ship-type")
+    loop.add_argument("--target-quest-code")
+    loop.add_argument("--target-quest-step-name")
 
     call = sub.add_parser("call", help="Generic edge-function call")
     call.add_argument("endpoint")
@@ -371,7 +478,11 @@ def _add_common_config_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_start_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--transport", choices=["daily", "smallwebrtc"], default="daily")
+    parser.add_argument(
+        "--transport",
+        choices=["daily", "rawdaily", "smallwebrtc"],
+        default="daily",
+    )
     parser.add_argument("--bypass-tutorial", action="store_true")
     parser.add_argument("--voice-id")
     parser.add_argument("--personality-tone")
@@ -672,6 +783,27 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-task-events":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_task_events(
+                args.task_id,
+                cursor=args.cursor,
+                max_rows=args.max_rows,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-map":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
@@ -684,6 +816,90 @@ async def dispatch(args: argparse.Namespace) -> int:
                 max_sectors=args.max_sectors,
                 timeout=args.event_timeout_seconds,
             )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-chat-history":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_chat_history(
+                since_hours=args.since_hours,
+                max_rows=args.max_rows,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-ships":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_my_ships(timeout=args.event_timeout_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-ship-definitions":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_ship_definitions(timeout=args.event_timeout_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-corporation":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.get_my_corporation(timeout=args.event_timeout_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-quest-status":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.wait_for_quest_status(timeout=args.event_timeout_seconds)
             print(
                 dump_json(
                     {
@@ -788,6 +1004,69 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-trade-order":
+        prompt = _trade_order_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                prompt,
+                wait_seconds=args.wait_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-purchase-ship":
+        prompt = _ship_purchase_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                prompt,
+                wait_seconds=args.wait_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-purchase-corp-ship":
+        prompt = _corporation_ship_purchase_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                prompt,
+                wait_seconds=args.wait_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-watch":
         if args.duration_seconds < 0:
             raise HeadlessBridgeError("session-watch", "--duration-seconds must be >= 0")
@@ -807,6 +1086,38 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "sent": sent_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command in {"loop", "session-loop"}:
+        if not args.forever and args.duration_seconds <= 0:
+            raise HeadlessBridgeError("loop", "--duration-seconds must be > 0 unless --forever is set")
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            runner = SessionLoopRunner(bridge)
+            result = await runner.run(
+                SessionLoopOptions(
+                    objective=args.objective,
+                    bootstrap_timeout_seconds=args.bootstrap_timeout_seconds,
+                    duration_seconds=args.duration_seconds,
+                    forever=args.forever,
+                    send_start=not args.no_start,
+                    status_interval_seconds=args.status_interval_seconds,
+                    idle_reprompt_seconds=args.idle_reprompt_seconds,
+                    max_reprompts=args.max_reprompts,
+                    reprompt_prefix=args.reprompt_prefix,
+                    targets=_loop_targets_from_args(args),
+                )
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -1116,6 +1427,49 @@ def _session_connect_options_from_args(
         personality_tone=args.personality_tone,
         character_name=args.character_name,
     )
+
+
+def _loop_targets_from_args(args: argparse.Namespace) -> LoopTargets:
+    return LoopTargets(
+        credits=args.target_credits,
+        sector=args.target_sector,
+        ship_type=args.target_ship_type,
+        quest_code=args.target_quest_code,
+        quest_step_name=args.target_quest_step_name,
+    )
+
+
+def _trade_order_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_trade_order_prompt(
+            trade_type=args.trade_type,
+            quantity=args.quantity,
+            commodity=args.commodity,
+            price_per_unit=args.price_per_unit,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-trade-order", str(exc)) from exc
+
+
+def _ship_purchase_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_ship_purchase_prompt(
+            ship_display_name=args.ship_display_name,
+            replace_ship_name=args.replace_ship_name,
+            replace_ship_id=args.replace_ship_id,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-purchase-ship", str(exc)) from exc
+
+
+def _corporation_ship_purchase_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_corporation_ship_purchase_prompt(
+            ship_display_name=args.ship_display_name,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-purchase-corp-ship", str(exc)) from exc
+
 
 def _require_access_token(raw: str | None, config: HeadlessConfig) -> str:
     token = raw or config.access_token

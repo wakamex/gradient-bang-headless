@@ -276,7 +276,7 @@ class HeadlessApiClient:
             body["character_name"] = opts.character_name
 
         payload: dict[str, Any]
-        if opts.transport == "daily":
+        if opts.transport in {"daily", "rawdaily"}:
             payload = {
                 "createDailyRoom": True,
                 "dailyRoomProperties": {

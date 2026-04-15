@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import process from "node:process";
 import readline from "node:readline";
 
+import { BrowserDailyBridge } from "./browser_daily_bridge.mjs";
 import { NoopMediaManager } from "./noop_media_manager.mjs";
 import { RawWebRtcTransport } from "./raw_transport.mjs";
 import { installNodeWebRtcGlobals } from "./runtime.mjs";
@@ -23,15 +24,16 @@ JSON responses/events to stdout.
 
 Supported commands:
   {"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","transport":"daily","connectTimeoutMs":20000}
-  {"id":"2","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","transport":"smallwebrtc","connectTimeoutMs":20000}
-  {"id":"3","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","sessionId":"...","transport":"daily","connectTimeoutMs":20000}
-  {"id":"4","op":"sendClientMessage","messageType":"start","data":{}}
-  {"id":"5","op":"sendClientRequest","messageType":"get-my-status","data":{}}
-  {"id":"6","op":"sendText","content":"hello"}
-  {"id":"7","op":"disconnectBot"}
-  {"id":"8","op":"disconnect"}
-  {"id":"9","op":"status"}
-  {"id":"10","op":"close"}`;
+  {"id":"2","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","transport":"rawdaily","connectTimeoutMs":20000}
+  {"id":"3","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","transport":"smallwebrtc","connectTimeoutMs":20000}
+  {"id":"4","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","sessionId":"...","transport":"rawdaily","connectTimeoutMs":20000}
+  {"id":"5","op":"sendClientMessage","messageType":"start","data":{}}
+  {"id":"6","op":"sendClientRequest","messageType":"get-my-status","data":{}}
+  {"id":"7","op":"sendText","content":"hello"}
+  {"id":"8","op":"disconnectBot"}
+  {"id":"9","op":"disconnect"}
+  {"id":"10","op":"status"}
+  {"id":"11","op":"close"}`;
 
 const LOG_LEVELS = {
   none: LogLevel.NONE,
@@ -57,14 +59,14 @@ function requireString(value, name) {
 }
 
 function authHeaders(accessToken) {
-  return new Headers({
+  return {
     Authorization: `Bearer ${requireString(accessToken, "accessToken")}`,
-  });
+  };
 }
 
 function normalizeTransport(rawTransport) {
   const transport = String(rawTransport ?? "daily").toLowerCase();
-  if (transport !== "daily" && transport !== "smallwebrtc") {
+  if (transport !== "daily" && transport !== "rawdaily" && transport !== "smallwebrtc") {
     throw new Error(`unsupported transport ${JSON.stringify(rawTransport)}`);
   }
   return transport;
@@ -92,8 +94,8 @@ function buildStartRequest(command) {
     headers: authHeaders(command.accessToken),
     timeout: typeof command.requestTimeoutMs === "number" ? command.requestTimeoutMs : undefined,
     requestData: {
-      createDailyRoom: transport === "daily",
-      ...(transport === "daily"
+      createDailyRoom: transport === "daily" || transport === "rawdaily",
+      ...(transport === "daily" || transport === "rawdaily"
         ? {
             dailyRoomProperties: {
               start_video_off: true,
@@ -362,9 +364,12 @@ function withTimeout(promise, timeoutMs, label) {
   ]);
 }
 
-class SmallWebRtcBridge {
+class HeadlessTransportBridge {
   constructor() {
     this.client = null;
+    this.browserBridge = new BrowserDailyBridge({
+      emitDiagnostic: (event, payload) => emitEvent(event, payload),
+    });
     this.accessToken = null;
     this.logLevel = LogLevel.INFO;
     this.lastBotStarted = null;
@@ -378,6 +383,10 @@ class SmallWebRtcBridge {
         mediaManager: new NoopMediaManager(),
         waitForICEGathering: true,
       });
+    }
+
+    if (transportKind !== "rawdaily") {
+      throw new Error(`local transport is unsupported for ${transportKind}`);
     }
 
     return new RawWebRtcTransport({
@@ -434,19 +443,52 @@ class SmallWebRtcBridge {
         });
       }
     }
+    await this.browserBridge.close();
     this.transportKind = transportKind;
     this.lastBotStarted = null;
     this.client = this._buildClient(functionsUrl, transportKind);
     return this.client;
   }
 
+  async _prepareBrowserBridge() {
+    if (this.client) {
+      try {
+        await this.client.disconnect();
+      } catch (error) {
+        emitEvent("bridge_warning", {
+          message: "disconnect before browser handoff failed",
+          error: serializeError(error),
+        });
+      }
+      this.client = null;
+    }
+    this.transportKind = "daily";
+  }
+
   async connect(command) {
     const functionsUrl = normalizeFunctionsUrl(command.functionsUrl);
     const transportKind = normalizeTransport(command.transport);
     this.accessToken = requireString(command.accessToken, "accessToken");
-    const client = await this._replaceClient(functionsUrl, transportKind);
     const connectTimeoutMs =
       typeof command.connectTimeoutMs === "number" ? command.connectTimeoutMs : 20000;
+
+    if (transportKind === "daily") {
+      await this._prepareBrowserBridge();
+      return this.browserBridge.connect({
+        ...command,
+        functionsUrl,
+        startRequest: {
+          ...buildStartRequest(command),
+          requestTimeoutMs:
+            typeof command.requestTimeoutMs === "number"
+              ? command.requestTimeoutMs
+              : undefined,
+        },
+        connectTimeoutMs,
+      });
+    }
+
+    const client = await this._replaceClient(functionsUrl, transportKind);
 
     try {
       if (command.sessionId) {
@@ -537,6 +579,12 @@ class SmallWebRtcBridge {
   }
 
   async sendClientMessage(command) {
+    if (this.transportKind === "daily") {
+      return this.browserBridge.sendClientMessage({
+        messageType: requireString(command.messageType, "messageType"),
+        data: command.data ?? {},
+      });
+    }
     this._requireClient();
     this.client.sendClientMessage(
       requireString(command.messageType, "messageType"),
@@ -546,6 +594,13 @@ class SmallWebRtcBridge {
   }
 
   async sendClientRequest(command) {
+    if (this.transportKind === "daily") {
+      return this.browserBridge.sendClientRequest({
+        messageType: requireString(command.messageType, "messageType"),
+        data: command.data ?? {},
+        timeoutMs: typeof command.timeoutMs === "number" ? command.timeoutMs : undefined,
+      });
+    }
     this._requireClient();
     const result = await this.client.sendClientRequest(
       requireString(command.messageType, "messageType"),
@@ -556,18 +611,30 @@ class SmallWebRtcBridge {
   }
 
   async sendText(command) {
+    if (this.transportKind === "daily") {
+      return this.browserBridge.sendText({
+        content: requireString(command.content, "content"),
+        options: command.options ?? {},
+      });
+    }
     this._requireClient();
     await this.client.sendText(requireString(command.content, "content"), command.options ?? {});
     return { sent: true };
   }
 
   async disconnectBot() {
+    if (this.transportKind === "daily") {
+      return this.browserBridge.disconnectBot();
+    }
     this._requireClient();
     this.client.disconnectBot();
     return { sent: true };
   }
 
   async disconnect() {
+    if (this.transportKind === "daily") {
+      return this.browserBridge.disconnect();
+    }
     if (!this.client) {
       return { disconnected: false };
     }
@@ -576,6 +643,9 @@ class SmallWebRtcBridge {
   }
 
   async status() {
+    if (this.transportKind === "daily") {
+      return this.browserBridge.status();
+    }
     return {
       hasClient: Boolean(this.client),
       connected: Boolean(this.client?.connected),
@@ -590,6 +660,9 @@ class SmallWebRtcBridge {
       throw new Error(`unsupported log level ${rawLevel}`);
     }
     this.logLevel = LOG_LEVELS[rawLevel];
+    if (this.transportKind === "daily") {
+      return this.browserBridge.setLogLevel({ level: rawLevel });
+    }
     if (this.client) {
       this.client.setLogLevel(this.logLevel);
     }
@@ -603,6 +676,7 @@ class SmallWebRtcBridge {
   }
 
   async close() {
+    await this.browserBridge.close();
     await this.disconnect();
     return { closed: true };
   }
@@ -625,7 +699,7 @@ async function main(argv) {
     return 0;
   }
 
-  const bridge = new SmallWebRtcBridge();
+  const bridge = new HeadlessTransportBridge();
   emitEvent("bridge_ready", {
     protocol_version: 1,
     transport: "webrtc",

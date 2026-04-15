@@ -66,7 +66,7 @@ class SessionConnectOptions:
 
 
 class HeadlessBridgeProcess:
-    """Async wrapper around the JSON-lines Node SmallWebRTC bridge."""
+    """Async wrapper around the JSON-lines Node session-transport bridge."""
 
     def __init__(
         self,
@@ -276,6 +276,66 @@ class HeadlessBridgeProcess:
             timeout=timeout,
         )
 
+    async def get_task_events(
+        self,
+        task_id: str,
+        *,
+        cursor: str | None = None,
+        max_rows: int | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"task_id": task_id}
+        if cursor:
+            payload["cursor"] = cursor
+        if max_rows is not None:
+            payload["max_rows"] = max_rows
+        return await self.send_client_message_waiting(
+            "get-task-events",
+            data=payload,
+            expected_server_events="event.query",
+            timeout=timeout,
+        )
+
+    async def get_chat_history(
+        self,
+        *,
+        since_hours: int | None = None,
+        max_rows: int | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if since_hours is not None:
+            payload["since_hours"] = since_hours
+        if max_rows is not None:
+            payload["max_rows"] = max_rows
+        return await self.send_client_message_waiting(
+            "get-chat-history",
+            data=payload,
+            expected_server_events="chat.history",
+            timeout=timeout,
+        )
+
+    async def get_my_ships(self, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "get-my-ships",
+            expected_server_events="ships.list",
+            timeout=timeout,
+        )
+
+    async def get_ship_definitions(self, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "get-ship-definitions",
+            expected_server_events="ship.definitions",
+            timeout=timeout,
+        )
+
+    async def get_my_corporation(self, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "get-my-corporation",
+            expected_server_events={"corporation.data", "corporation_info"},
+            timeout=timeout,
+        )
+
     async def get_my_map(
         self,
         *,
@@ -311,6 +371,14 @@ class HeadlessBridgeProcess:
             expected_server_events="quest.status",
             timeout=timeout,
         )
+
+    async def wait_for_quest_status(self, *, timeout: float = 30.0) -> dict[str, Any]:
+        return {
+            "server_event": await self.wait_for_server_event(
+                "quest.status",
+                timeout=timeout,
+            )
+        }
 
     async def claim_step_reward(
         self,
@@ -381,7 +449,14 @@ class HeadlessBridgeProcess:
                 remaining = None
                 if deadline is not None:
                     remaining = max(0.0, deadline - asyncio.get_running_loop().time())
-                event = await self.next_event(timeout=remaining)
+                try:
+                    event = await self.next_event(timeout=remaining)
+                except asyncio.TimeoutError as exc:
+                    raise HeadlessBridgeError(
+                        "wait_for_server_event",
+                        f"timed out after {timeout:.1f}s waiting for {sorted(names)}",
+                        stderr_tail=self.stderr_tail,
+                    ) from exc
 
                 if event.get("event") == "error":
                     message = _event_error_message(event) or "bridge emitted an error event"
@@ -474,35 +549,46 @@ class HeadlessBridgeProcess:
     async def _read_stdout(self) -> None:
         assert self._process is not None and self._process.stdout is not None
 
+        buffer = b""
         while True:
-            line = await self._process.stdout.readline()
-            if not line:
+            chunk = await self._process.stdout.read(65536)
+            if not chunk:
                 break
-            raw = line.decode(errors="replace").strip()
-            if not raw:
-                continue
+            buffer += chunk
 
-            try:
-                message = json.loads(raw)
-            except json.JSONDecodeError:
-                await self._events.put({"type": "raw", "line": raw})
-                continue
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                await self._handle_stdout_line(line)
 
-            if message.get("type") == "response":
-                command_id = message.get("id")
-                future = self._pending.pop(command_id, None)
-                if future and not future.done():
-                    future.set_result(message)
-                continue
-
-            if message.get("type") == "fatal":
-                self._fail_pending(message.get("error", {}).get("message", "bridge fatal error"))
-                await self._events.put(message)
-                continue
-
-            await self._events.put(message)
+        if buffer:
+            await self._handle_stdout_line(buffer)
 
         self._fail_pending("bridge stdout closed")
+
+    async def _handle_stdout_line(self, line: bytes) -> None:
+        raw = line.decode(errors="replace").strip()
+        if not raw:
+            return
+
+        try:
+            message = json.loads(raw)
+        except json.JSONDecodeError:
+            await self._events.put({"type": "raw", "line": raw})
+            return
+
+        if message.get("type") == "response":
+            command_id = message.get("id")
+            future = self._pending.pop(command_id, None)
+            if future and not future.done():
+                future.set_result(message)
+            return
+
+        if message.get("type") == "fatal":
+            self._fail_pending(message.get("error", {}).get("message", "bridge fatal error"))
+            await self._events.put(message)
+            return
+
+        await self._events.put(message)
 
     async def _read_stderr(self) -> None:
         assert self._process is not None and self._process.stderr is not None

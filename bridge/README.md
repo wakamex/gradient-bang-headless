@@ -1,27 +1,26 @@
 # Bridge Runtimes
 
-This package contains the pure Node WebRTC bridge used by the headless
-client for direct Pipecat transport work.
+This package contains the session transport runtimes used by the headless
+client for direct Pipecat work.
 
-## Node WebRTC Bridge
+## Transport Modes
 
-The bridge is a text-first Node runtime for the production Pipecat transport.
+Three transport modes are currently supported:
 
-It intentionally skips microphone and camera capture. That keeps the direct
-transport path focused on:
+- `daily`: browser-backed official Daily transport via Playwright Chromium.
+  This is the live player path and the default mode.
+- `rawdaily`: the old raw Node Daily transport using Node WebRTC shims.
+  This is kept for diagnostics only.
+- `smallwebrtc`: the pure Node SmallWebRTC path via the official frontend
+  package. This is also diagnostic only today.
 
-- session creation via `POST /start`
-- session reconnect via `/start/{sessionId}/api/offer`
-- RTVI client messages like `start`, `get-my-status`, and `user-text-input`
+All three stay text-first and avoid microphone/camera capture as a gameplay
+dependency. The shipped client is biased toward semantic session messages and
+frontend-derived prompt contracts, not audio I/O.
 
-It still needs WebRTC primitives, so it installs `@roamhq/wrtc` and maps those
-globals into Node before creating the Pipecat client.
-
-Two bridge modes are supported:
-
-- `daily`: the existing raw Node transport around `createDailyRoom=true`
-- `smallwebrtc`: the official frontend `@pipecat-ai/small-webrtc-transport`
-  with a no-op media manager
+The raw Node modes still need WebRTC primitives, so they install
+`@roamhq/wrtc` and map those globals into Node before creating the Pipecat
+client.
 
 ## Setup
 
@@ -53,30 +52,27 @@ Example session:
 The bridge also supports direct reconnect by existing bot session:
 
 ```json
-{"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","sessionId":"...","transport":"daily"}
+{"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","sessionId":"...","transport":"rawdaily"}
 ```
 
 ## Current Status
 
-- The bridge process, JSON protocol, and Node WebRTC runtime are working.
-- The bridge now uses the same high-level bootstrap shape as the website client:
+- The bridge process, JSON protocol, and browser runtime are working.
+- The default `daily` mode now follows the website bootstrap path exactly with
   `PipecatClient.startBotAndConnect()`.
-- Production validation reaches transport `ready` in pure Node on the `daily`
-  bridge mode.
-- The `daily` path is proven to:
+- Production validation on `daily` is proven to:
   - call `/start`
-  - complete `/start/{sessionId}/api/offer`
-  - open the datachannel
-  - send `client-ready`
-  - send semantic client messages such as `start`
-- The `daily` path still does not receive `bot_ready` or gameplay frames from
-  the live server.
-- The `smallwebrtc` bridge mode now uses the same transport package as the
-  browser client.
-- The public `smallwebrtc` path still hangs at `/start/{sessionId}/api/offer`
-  under pure Node, but now fails on explicit bridge timeouts instead of waiting
-  forever.
-- The bridge now emits structured HTTP and raw datachannel diagnostics so failed
-  connects preserve the exact phase boundary in CLI error output.
-- Pipecat app-level frames are still blocked: `bot_ready` and semantic server
-  events have not yet been observed on the public path.
+  - reach `bot_ready`
+  - receive gameplay frames such as `status.snapshot`, `quest.status`,
+    `ports.list`, `map.local`, `chat.history`, `ships.list`,
+    and `ship.definitions`
+  - send semantic client messages such as `start`, `get-my-status`,
+    `assign-quest`, and `user-text-input`
+- The remaining problem on `daily` is not connectivity; it is higher-level
+  control quality on long bot-driven objectives.
+- `rawdaily` still demonstrates the raw Node Daily behavior, but it remains a
+  diagnostic path rather than the shipped player path.
+- `smallwebrtc` still hangs at `/start/{sessionId}/api/offer` in pure Node and
+  is kept for diagnostics.
+- The bridge emits structured HTTP, browser-console, and runtime diagnostics so
+  failed connects preserve the exact phase boundary in CLI error output.

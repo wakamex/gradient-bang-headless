@@ -13,22 +13,16 @@ The intent is not just to scaffold code, but to keep a running record of:
 
 ## Active Tasklist
 
-1. Make the bridge follow the website bootstrap path exactly:
-   use `PipecatClient.startBotAndConnect()` for fresh sessions instead of
-   manually splitting `start` and `connect`.
-2. Re-test both public transports against production:
-   - `daily`
-   - `smallwebrtc`
-3. If either transport still stalls, capture the precise phase boundary:
-   - `start` response
-   - offer request and response
-   - datachannel open
-   - outbound `client-ready`
-   - inbound `bot_ready` or server frames
-4. Keep the supported client surface browser-free while adding only the
-   observability needed to explain the live player path.
-5. Convert any newly proven player-surface action into a first-class headless
-   command and document it before using it to advance the live character.
+1. Keep browser-backed `daily` as the default live transport and treat
+   `rawdaily` and `smallwebrtc` as diagnostics only.
+2. Convert every frontend-proven session action into a first-class headless
+   command before using it in further discovery.
+3. Encode frontend-derived prompt contracts, not ad hoc prose, whenever the
+   website itself uses fixed prompt strings.
+4. Improve the long-objective loop so it can recover from bot drift and
+   distinguish real progress from chatter.
+5. Continue pushing the live character toward the Kestrel purchase and beyond,
+   but only through regular-player capabilities.
 
 ## Local Vs Live Constraint
 
@@ -105,8 +99,9 @@ target product surface for a player-distributed headless client.
 
 ### Session Transport
 
-In progress:
+Implemented:
 
+- browser-backed official Daily bridge via Playwright Chromium
 - raw WebRTC bridge process in Node
 - JSON-lines bridge protocol
 - Node WebRTC globals via `@roamhq/wrtc`
@@ -114,48 +109,63 @@ In progress:
 - Python wrapper for the bridge process
 - CLI session commands for bridge-driven connect/request/message/text flows
 - CLI raw event watching through `session-watch`
-- production path reaches:
-  `start -> /start/{sessionId}/api/offer -> ready`
+- first-class session commands for status, ports, map, chat history, ships,
+  ship definitions, corporation data, task events, and quest status
+- exact frontend prompt contracts for trade orders and ship purchase requests
+- a reusable `loop` runner for long bot-driven objectives
 
-Not yet proven:
+Production-proven on `daily`:
 
-- Pipecat `bot_ready`
-- transport-level command exchange after WebRTC connect
+- `/start`
+- `bot_ready`
+- `status.snapshot`
+- `quest.status`
+- `ports.list`
+- `map.local` and `map.region`
+- `chat.history`
+- `ships.list`
+- `ship.definitions`
+- semantic client messages such as `start`, `get-my-status`,
+  `get-known-ports`, `assign-quest`, `claim-step-reward`, and `user-text-input`
 
-Latest narrowing:
+Diagnostic-only today:
 
-- `start` succeeds live
-- the bridge now follows the website bootstrap path with `startBotAndConnect()`
-- the raw Node `daily` bridge reaches transport `ready`
-- the raw Node `daily` bridge is now proven to send `client-ready` over the
-  datachannel after connect
-- the raw Node `daily` bridge is now proven to send semantic client messages
-  like `start`, but still receives no inbound Pipecat frames
-- `start --transport smallwebrtc` returns a real `sessionId` plus `iceConfig`
-- official pure-Node `smallwebrtc` still hangs on `/api/offer`
-- `smallwebrtc` was re-tested with `waitForICEGathering=true`, producing a
-  candidate-rich offer, and still received no `/api/offer` response
-- `createDailyRoom=true` sessions answer `/api/offer` and open a datachannel
-- Pipecat app-level frames are still missing on the public path
-- `session-watch` confirms that even explicit `start` messages currently produce no server events
-- bridge failures now include structured HTTP and datachannel diagnostics in the
-  error payload, so transport stalls are inspectable without browser tooling
+- `rawdaily`: useful for comparing browser-backed Daily against raw Node Daily
+- `smallwebrtc`: still stalls at `/start/{sessionId}/api/offer` in pure Node
+
+Current blocker:
+
+- long bot-driven objectives still drift or stall
+- the transport is healthy, but the controller loop needs stronger stateful
+  guidance than a single broad objective prompt
 
 ### Current Live State
 
-Latest live read from `user_character_list`:
+Latest live state observed through the session surface:
 
 - character: `gbheadless19873`
 - ship: `sparrow_scout`
-- sector: `1413`
-- ship credits: `12,865`
-- cargo: `retro_organics=20`
+- sector: `1333`
+- ship credits: `12,665`
+- cargo: empty
 - fighters: `200`
-- warp power: `386`
+- warp power: `356`
+- tutorial step: `Purchase a kestrel`
+- corporation tutorial step: `Create or join a corporation`
 
-That confirms the live character still exists and can be inspected through the
-public JWT surface, but gameplay progression remains blocked on the public
-session transport rather than account/bootstrap state.
+Latest live progression proved:
+
+- moved headlessly from sector `1942` to the mega-port in sector `1413`
+- sent the exact website ship-purchase prompt for `Kestrel Courier`
+- production bot calculated the remaining shortfall as `2,335` credits
+- generic trade loop then drifted off the mega-port and stalled without earning
+  the missing credits
+
+Interpretation:
+
+- the live player path is working
+- the next bottleneck is not auth or transport
+- the remaining work is stronger control over repeated trade/purchase behavior
 
 ## Endpoint Coverage
 
@@ -194,9 +204,11 @@ Covered indirectly, but not counted in the `20`:
 
 - generic raw edge-function calls through `call` and `game-call`
 - session-semantic commands such as `session-start`, `session-status`,
-  `session-known-ports`, `session-map`, `session-assign-quest`,
-  `session-claim-reward`, `session-cancel-task`, `session-skip-tutorial`,
-  and `session-user-text`
+  `session-known-ports`, `session-map`, `session-chat-history`,
+  `session-ships`, `session-ship-definitions`, `session-corporation`,
+  `session-quest-status`, `session-assign-quest`, `session-claim-reward`,
+  `session-cancel-task`, `session-skip-tutorial`, `session-user-text`,
+  `session-trade-order`, `session-purchase-ship`, and `loop`
 - Supabase verify-link confirmation through `confirm-url`
 
 Interpretation:
