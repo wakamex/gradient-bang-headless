@@ -203,6 +203,109 @@ def build_parser() -> argparse.ArgumentParser:
     game_call.add_argument("--api-token")
     _add_common_config_args(game_call)
 
+    status = sub.add_parser("status", help="Call my_status with trusted gameplay auth")
+    _add_gameplay_target_args(status)
+
+    move = sub.add_parser("move", help="Move to an adjacent sector with trusted gameplay auth")
+    move.add_argument("--to-sector", required=True, type=int)
+    _add_gameplay_target_args(move)
+
+    plot_course = sub.add_parser(
+        "plot-course",
+        help="Call plot_course with trusted gameplay auth",
+    )
+    plot_course.add_argument("--to-sector", required=True, type=int)
+    plot_course.add_argument("--from-sector", type=int)
+    _add_gameplay_target_args(plot_course)
+
+    map_region = sub.add_parser(
+        "map-region",
+        help="Call local_map_region with trusted gameplay auth",
+    )
+    map_region.add_argument("--center-sector", type=int)
+    map_region.add_argument("--max-hops", type=int)
+    map_region.add_argument("--max-sectors", type=int)
+    map_region.add_argument("--bounds", type=int)
+    map_region.add_argument("--fit-sector", action="append", dest="fit_sectors", type=int, default=[])
+    map_region.add_argument("--source")
+    _add_gameplay_target_args(map_region)
+
+    known_ports = sub.add_parser(
+        "known-ports",
+        help="Call list_known_ports with trusted gameplay auth",
+    )
+    known_ports.add_argument("--from-sector", type=int)
+    known_ports.add_argument("--max-hops", type=int)
+    known_ports.add_argument("--port-type")
+    known_ports.add_argument("--commodity")
+    known_ports.add_argument("--trade-type", choices=["buy", "sell"])
+    mega_group = known_ports.add_mutually_exclusive_group()
+    mega_group.add_argument("--mega", action="store_true")
+    mega_group.add_argument("--non-mega", action="store_true")
+    _add_gameplay_target_args(known_ports)
+
+    trade = sub.add_parser("trade", help="Call trade with trusted gameplay auth")
+    trade.add_argument("--commodity", required=True)
+    trade.add_argument("--quantity", required=True, type=int)
+    trade.add_argument("--trade-type", required=True, choices=["buy", "sell"])
+    _add_gameplay_target_args(trade)
+
+    recharge_warp = sub.add_parser(
+        "recharge-warp",
+        help="Call recharge_warp_power with trusted gameplay auth",
+    )
+    recharge_warp.add_argument("--units", required=True, type=int)
+    _add_gameplay_target_args(recharge_warp)
+
+    purchase_fighters = sub.add_parser(
+        "purchase-fighters",
+        help="Call purchase_fighters with trusted gameplay auth",
+    )
+    purchase_fighters.add_argument("--units", required=True, type=int)
+    _add_gameplay_target_args(purchase_fighters)
+
+    ship_definitions = sub.add_parser(
+        "ship-definitions",
+        help="Call ship_definitions with trusted gameplay auth",
+    )
+    ship_definitions.add_argument("--include-description", action="store_true")
+    ship_definitions.add_argument("--api-token")
+    _add_common_config_args(ship_definitions)
+
+    ship_purchase = sub.add_parser(
+        "ship-purchase",
+        help="Call ship_purchase with trusted gameplay auth",
+    )
+    ship_purchase.add_argument("--ship-type", required=True)
+    ship_purchase.add_argument("--expected-price", type=int)
+    ship_purchase.add_argument("--purchase-type")
+    ship_purchase.add_argument("--ship-name")
+    ship_purchase.add_argument("--trade-in-ship-id")
+    ship_purchase.add_argument("--corp-id")
+    ship_purchase.add_argument("--initial-ship-credits", type=int)
+    _add_gameplay_target_args(ship_purchase)
+
+    quest_status = sub.add_parser(
+        "quest-status",
+        help="Call quest_status with trusted gameplay auth",
+    )
+    _add_gameplay_target_args(quest_status)
+
+    quest_assign = sub.add_parser(
+        "quest-assign",
+        help="Call quest_assign with trusted gameplay auth",
+    )
+    quest_assign.add_argument("--quest-code", required=True)
+    _add_gameplay_target_args(quest_assign)
+
+    quest_claim_reward = sub.add_parser(
+        "quest-claim-reward",
+        help="Call quest_claim_reward with trusted gameplay auth",
+    )
+    quest_claim_reward.add_argument("--quest-id", required=True)
+    quest_claim_reward.add_argument("--step-id", required=True)
+    _add_gameplay_target_args(quest_claim_reward)
+
     events_since = sub.add_parser("events-since", help="Poll events_since")
     events_since.add_argument("--character-id", action="append", dest="character_ids", default=[])
     events_since.add_argument("--ship-id", action="append", dest="ship_ids", default=[])
@@ -259,6 +362,13 @@ def _add_browser_connect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log-transport", action="store_true")
     parser.add_argument("--traffic-limit", type=int, default=200)
     parser.add_argument("--traffic-body-limit", type=int, default=2_000)
+    _add_common_config_args(parser)
+
+
+def _add_gameplay_target_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--character-id")
+    parser.add_argument("--actor-character-id")
+    parser.add_argument("--api-token")
     _add_common_config_args(parser)
 
 
@@ -655,6 +765,206 @@ async def dispatch(args: argparse.Namespace) -> int:
             print(dump_json(result))
             return 0
 
+    if args.command == "status":
+        async with HeadlessApiClient(config) as client:
+            result = await client.my_status(
+                character_id=_require_character_id(args.character_id, config, operation="status"),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "move":
+        async with HeadlessApiClient(config) as client:
+            result = await client.move(
+                args.to_sector,
+                character_id=_require_character_id(args.character_id, config, operation="move"),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "plot-course":
+        async with HeadlessApiClient(config) as client:
+            result = await client.plot_course(
+                args.to_sector,
+                from_sector=args.from_sector,
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="plot-course",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "map-region":
+        async with HeadlessApiClient(config) as client:
+            result = await client.local_map_region(
+                center_sector=args.center_sector,
+                max_hops=args.max_hops,
+                max_sectors=args.max_sectors,
+                bounds=args.bounds,
+                fit_sectors=args.fit_sectors or None,
+                source=args.source,
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="map-region",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "known-ports":
+        mega: bool | None = None
+        if args.mega:
+            mega = True
+        elif args.non_mega:
+            mega = False
+        async with HeadlessApiClient(config) as client:
+            result = await client.list_known_ports(
+                from_sector=args.from_sector,
+                max_hops=args.max_hops,
+                port_type=args.port_type,
+                commodity=args.commodity,
+                trade_type=args.trade_type,
+                mega=mega,
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="known-ports",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "trade":
+        async with HeadlessApiClient(config) as client:
+            result = await client.trade(
+                commodity=args.commodity,
+                quantity=args.quantity,
+                trade_type=args.trade_type,
+                character_id=_require_character_id(args.character_id, config, operation="trade"),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "recharge-warp":
+        async with HeadlessApiClient(config) as client:
+            result = await client.recharge_warp_power(
+                units=args.units,
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="recharge-warp",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "purchase-fighters":
+        async with HeadlessApiClient(config) as client:
+            result = await client.purchase_fighters(
+                units=args.units,
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="purchase-fighters",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "ship-definitions":
+        async with HeadlessApiClient(config) as client:
+            result = await client.ship_definitions(
+                include_description=args.include_description,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "ship-purchase":
+        async with HeadlessApiClient(config) as client:
+            result = await client.ship_purchase(
+                ship_type=args.ship_type,
+                expected_price=args.expected_price,
+                purchase_type=args.purchase_type,
+                ship_name=args.ship_name,
+                trade_in_ship_id=args.trade_in_ship_id,
+                corp_id=args.corp_id,
+                initial_ship_credits=args.initial_ship_credits,
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="ship-purchase",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "quest-status":
+        async with HeadlessApiClient(config) as client:
+            result = await client.quest_status(
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="quest-status",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "quest-assign":
+        async with HeadlessApiClient(config) as client:
+            result = await client.quest_assign(
+                quest_code=args.quest_code,
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="quest-assign",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "quest-claim-reward":
+        async with HeadlessApiClient(config) as client:
+            result = await client.quest_claim_reward(
+                quest_id=args.quest_id,
+                step_id=args.step_id,
+                character_id=_require_character_id(
+                    args.character_id,
+                    config,
+                    operation="quest-claim-reward",
+                ),
+                actor_character_id=args.actor_character_id,
+                api_token=args.api_token,
+            )
+            print(dump_json(result))
+            return 0
+
     if args.command == "events-since":
         async with HeadlessApiClient(config) as client:
             character_ids = args.character_ids or ([config.character_id] if config.character_id else [])
@@ -769,6 +1079,22 @@ def _require_access_token(raw: str | None, config: HeadlessConfig) -> str:
     if not token:
         raise HeadlessApiError("cli", 0, "missing --access-token or GB_ACCESS_TOKEN")
     return token
+
+
+def _require_character_id(
+    raw: str | None,
+    config: HeadlessConfig,
+    *,
+    operation: str,
+) -> str:
+    character_id = raw or config.character_id
+    if not character_id:
+        raise HeadlessApiError(
+            operation,
+            0,
+            "missing --character-id or GB_CHARACTER_ID",
+        )
+    return character_id
 
 
 def _require_text(

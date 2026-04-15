@@ -96,6 +96,10 @@ gb-headless browser-command-watch \
   --watch-timeout-ms 300000 \
   --poll-interval-ms 15000
 gb-headless call leaderboard_resources --method GET
+gb-headless status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
+gb-headless plot-course --to-sector 301 --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
+gb-headless known-ports --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
+gb-headless quest-status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless game-call my_status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN" --follow
 ```
@@ -103,6 +107,10 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 ## Notes
 
 - `call` is a generic edge-function wrapper.
+- `status`, `move`, `plot-course`, `map-region`, `known-ports`, `trade`,
+  `recharge-warp`, `purchase-fighters`, `ship-definitions`, `ship-purchase`,
+  `quest-status`, `quest-assign`, and `quest-claim-reward` are the preferred
+  trusted gameplay commands over raw `game-call`.
 - `.env` values are used automatically for login/browser defaults, so the
   shortest commands can omit repeated credentials.
 - `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.

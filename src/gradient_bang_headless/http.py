@@ -390,6 +390,276 @@ class HeadlessApiClient:
             require_api_token=True,
         )
 
+    async def my_status(
+        self,
+        *,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        return await self.call_gameplay(
+            "my_status",
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def move(
+        self,
+        to_sector: int,
+        *,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        return await self.call_gameplay(
+            "move",
+            payload={"to_sector": to_sector},
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def plot_course(
+        self,
+        to_sector: int,
+        *,
+        from_sector: int | None = None,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        payload: dict[str, Any] = {"to_sector": to_sector}
+        if from_sector is not None:
+            payload["from_sector"] = from_sector
+        return await self.call_gameplay(
+            "plot_course",
+            payload=payload,
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def local_map_region(
+        self,
+        *,
+        center_sector: int | None = None,
+        max_hops: int | None = None,
+        max_sectors: int | None = None,
+        bounds: int | None = None,
+        fit_sectors: list[int] | None = None,
+        source: str | None = None,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        payload: dict[str, Any] = {}
+        if center_sector is not None:
+            payload["center_sector"] = center_sector
+        if max_hops is not None:
+            payload["max_hops"] = max_hops
+        if max_sectors is not None:
+            payload["max_sectors"] = max_sectors
+        if bounds is not None:
+            payload["bounds"] = bounds
+        if fit_sectors:
+            payload["fit_sectors"] = fit_sectors
+        if source:
+            payload["source"] = source
+        return await self.call_gameplay(
+            "local_map_region",
+            payload=payload,
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def list_known_ports(
+        self,
+        *,
+        from_sector: int | None = None,
+        max_hops: int | None = None,
+        port_type: str | None = None,
+        commodity: str | None = None,
+        trade_type: str | None = None,
+        mega: bool | None = None,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        payload: dict[str, Any] = {}
+        if from_sector is not None:
+            payload["from_sector"] = from_sector
+        if max_hops is not None:
+            payload["max_hops"] = max_hops
+        if port_type:
+            payload["port_type"] = port_type
+        if commodity:
+            payload["commodity"] = commodity
+        if trade_type:
+            payload["trade_type"] = trade_type
+        if mega is not None:
+            payload["mega"] = mega
+        return await self.call_gameplay(
+            "list_known_ports",
+            payload=payload,
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def trade(
+        self,
+        *,
+        commodity: str,
+        quantity: int,
+        trade_type: str,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        return await self.call_gameplay(
+            "trade",
+            payload={
+                "commodity": commodity,
+                "quantity": quantity,
+                "trade_type": trade_type,
+            },
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def recharge_warp_power(
+        self,
+        *,
+        units: int,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        return await self.call_gameplay(
+            "recharge_warp_power",
+            payload={"units": units},
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def purchase_fighters(
+        self,
+        *,
+        units: int,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        return await self.call_gameplay(
+            "purchase_fighters",
+            payload={"units": units},
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def ship_definitions(
+        self,
+        *,
+        include_description: bool = False,
+        api_token: str | None = None,
+    ) -> Any:
+        payload: dict[str, Any] = {}
+        if include_description:
+            payload["include_description"] = True
+        return await self.request(
+            "ship_definitions",
+            payload=payload,
+            api_token=api_token,
+            require_api_token=True,
+        )
+
+    async def ship_purchase(
+        self,
+        *,
+        ship_type: str,
+        expected_price: int | None = None,
+        purchase_type: str | None = None,
+        ship_name: str | None = None,
+        trade_in_ship_id: str | None = None,
+        corp_id: str | None = None,
+        initial_ship_credits: int | None = None,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        payload: dict[str, Any] = {"ship_type": ship_type}
+        if expected_price is not None:
+            payload["expected_price"] = expected_price
+        if purchase_type:
+            payload["purchase_type"] = purchase_type
+        if ship_name:
+            payload["ship_name"] = ship_name
+        if trade_in_ship_id:
+            payload["trade_in_ship_id"] = trade_in_ship_id
+        if corp_id:
+            payload["corp_id"] = corp_id
+        if initial_ship_credits is not None:
+            payload["initial_ship_credits"] = initial_ship_credits
+        return await self.call_gameplay(
+            "ship_purchase",
+            payload=payload,
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def quest_assign(
+        self,
+        *,
+        quest_code: str,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        return await self.call_gameplay(
+            "quest_assign",
+            payload={"quest_code": quest_code},
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def quest_status(
+        self,
+        *,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        return await self.call_gameplay(
+            "quest_status",
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
+    async def quest_claim_reward(
+        self,
+        *,
+        quest_id: str,
+        step_id: str,
+        character_id: str | None = None,
+        actor_character_id: str | None = None,
+        api_token: str | None = None,
+    ) -> Any:
+        return await self.call_gameplay(
+            "quest_claim_reward",
+            payload={"quest_id": quest_id, "step_id": step_id},
+            character_id=character_id,
+            actor_character_id=actor_character_id,
+            api_token=api_token,
+        )
+
     async def events_since(
         self,
         *,
