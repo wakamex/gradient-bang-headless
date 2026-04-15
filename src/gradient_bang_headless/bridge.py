@@ -33,6 +33,7 @@ class HeadlessBridgeError(RuntimeError):
 class SessionConnectOptions:
     access_token: str
     functions_url: str
+    transport: str = "daily"
     character_id: str | None = None
     session_id: str | None = None
     connect_timeout_ms: int = 20_000
@@ -46,6 +47,7 @@ class SessionConnectOptions:
         payload: dict[str, Any] = {
             "functionsUrl": self.functions_url,
             "accessToken": self.access_token,
+            "transport": self.transport,
             "connectTimeoutMs": self.connect_timeout_ms,
             "requestTimeoutMs": self.request_timeout_ms,
         }

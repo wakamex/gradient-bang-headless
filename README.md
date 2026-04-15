@@ -13,10 +13,11 @@ This repo is the home for a headless client and automation tooling for Gradient 
 This scaffold supports:
 
 - public control-plane calls like `register`, `login`, `user_character_create`, and `start`
+- public read-only calls like `leaderboard_resources`
 - named protected gameplay calls for trusted use
 - generic edge-function calls against `https://api.gradient-bang.com/functions/v1`
 - `events_since` polling for request/event correlation
-- a text-first raw Node WebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
+- a text-first Node WebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
 - Python/CLI bridge integration for session connect/request/message flows
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
@@ -65,9 +66,15 @@ gb-headless confirm-url --verify-url 'https://api.gradient-bang.com/auth/v1/veri
 gb-headless character-list --access-token "$GB_ACCESS_TOKEN"
 gb-headless character-create --access-token "$GB_ACCESS_TOKEN"
 gb-headless start-session --access-token "$GB_ACCESS_TOKEN"
+gb-headless leaderboard-resources
 gb-headless signup-and-start \
   --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
 gb-headless session-connect --character-id "$GB_CHARACTER_ID" --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-connect \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --transport smallwebrtc \
+  --connect-timeout-ms 8000
 gb-headless session-request \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -107,6 +114,8 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 ## Notes
 
 - `call` is a generic edge-function wrapper.
+- `leaderboard-resources` is the preferred public command for the leaderboard
+  read model instead of `call leaderboard_resources --method GET`.
 - `status`, `move`, `plot-course`, `map-region`, `known-ports`, `trade`,
   `recharge-warp`, `purchase-fighters`, `ship-definitions`, `ship-purchase`,
   `quest-status`, `quest-assign`, and `quest-claim-reward` are the preferred
@@ -128,10 +137,16 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.
 - the Node bridge is text-first: it skips mic/camera capture, but still needs Node WebRTC support through `@roamhq/wrtc`.
 - `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
+- `session-connect --transport daily` uses the current raw Node bridge and is the
+  only public mode proven to reach transport `ready`.
+- `session-connect --transport smallwebrtc` now uses the official frontend
+  `@pipecat-ai/small-webrtc-transport` in pure Node with a no-op media manager.
 - `session-watch` is the fastest way to inspect raw bridge events after connect and after one optional client message.
 - the preferred order is: direct edge-function method, then direct session message.
 - browser-driven gameplay is intentionally not part of the supported client surface in this repo.
 - the current public bridge bootstraps with `start(createDailyRoom=true)` and reaches transport `ready` in pure Node.
+- the public `smallwebrtc` bridge path is now wired through the real frontend
+  transport, but it still stalls at `/start/{sessionId}/api/offer` in pure Node.
 - Pipecat app-level frames are still blocked: the public bridge does not yet receive `bot_ready` or gameplay server events after connect.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.

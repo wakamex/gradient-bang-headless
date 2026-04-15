@@ -4,11 +4,13 @@ import { createRequire } from "node:module";
 import process from "node:process";
 import readline from "node:readline";
 
+import { NoopMediaManager } from "./noop_media_manager.mjs";
 import { RawWebRtcTransport } from "./raw_transport.mjs";
 import { installNodeWebRtcGlobals } from "./runtime.mjs";
 
 const require = createRequire(import.meta.url);
 const { LogLevel, PipecatClient } = require("@pipecat-ai/client-js");
+const { SmallWebRTCTransport } = require("@pipecat-ai/small-webrtc-transport");
 
 redirectConsoleToStderr();
 installNodeWebRtcGlobals();
@@ -19,15 +21,16 @@ Reads newline-delimited JSON commands from stdin and writes newline-delimited
 JSON responses/events to stdout.
 
 Supported commands:
-  {"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","connectTimeoutMs":20000}
-  {"id":"2","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","sessionId":"...","connectTimeoutMs":20000}
-  {"id":"3","op":"sendClientMessage","messageType":"start","data":{}}
-  {"id":"4","op":"sendClientRequest","messageType":"get-my-status","data":{}}
-  {"id":"5","op":"sendText","content":"hello"}
-  {"id":"6","op":"disconnectBot"}
-  {"id":"7","op":"disconnect"}
-  {"id":"8","op":"status"}
-  {"id":"9","op":"close"}`;
+  {"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","transport":"daily","connectTimeoutMs":20000}
+  {"id":"2","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","transport":"smallwebrtc","connectTimeoutMs":20000}
+  {"id":"3","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","sessionId":"...","transport":"daily","connectTimeoutMs":20000}
+  {"id":"4","op":"sendClientMessage","messageType":"start","data":{}}
+  {"id":"5","op":"sendClientRequest","messageType":"get-my-status","data":{}}
+  {"id":"6","op":"sendText","content":"hello"}
+  {"id":"7","op":"disconnectBot"}
+  {"id":"8","op":"disconnect"}
+  {"id":"9","op":"status"}
+  {"id":"10","op":"close"}`;
 
 const LOG_LEVELS = {
   none: LogLevel.NONE,
@@ -58,7 +61,16 @@ function authHeaders(accessToken) {
   });
 }
 
+function normalizeTransport(rawTransport) {
+  const transport = String(rawTransport ?? "daily").toLowerCase();
+  if (transport !== "daily" && transport !== "smallwebrtc") {
+    throw new Error(`unsupported transport ${JSON.stringify(rawTransport)}`);
+  }
+  return transport;
+}
+
 function buildStartRequest(command) {
+  const transport = normalizeTransport(command.transport);
   const body = {
     character_id: requireString(command.characterId, "characterId"),
     bypass_tutorial: Boolean(command.bypassTutorial),
@@ -79,13 +91,27 @@ function buildStartRequest(command) {
     headers: authHeaders(command.accessToken),
     timeout: typeof command.requestTimeoutMs === "number" ? command.requestTimeoutMs : undefined,
     requestData: {
-      createDailyRoom: true,
-      dailyRoomProperties: {
-        start_video_off: true,
-        eject_at_room_exp: true,
-      },
+      createDailyRoom: transport === "daily",
+      ...(transport === "daily"
+        ? {
+            dailyRoomProperties: {
+              start_video_off: true,
+              eject_at_room_exp: true,
+            },
+          }
+        : {
+            enableDefaultIceServers: true,
+          }),
       body,
     },
+  };
+}
+
+function buildOfferRequest(command, sessionId) {
+  return {
+    endpoint: `${normalizeFunctionsUrl(command.functionsUrl)}/start/${sessionId}/api/offer`,
+    headers: authHeaders(command.accessToken),
+    timeout: typeof command.requestTimeoutMs === "number" ? command.requestTimeoutMs : undefined,
   };
 }
 
@@ -120,6 +146,14 @@ function serializeError(error) {
 
 function writeMessage(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function writeFatalAndExit(error, exitCode = 1) {
+  writeMessage({
+    type: "fatal",
+    error: serializeError(error),
+  });
+  process.exit(exitCode);
 }
 
 function redirectConsoleToStderr() {
@@ -168,14 +202,26 @@ class SmallWebRtcBridge {
     this.client = null;
     this.accessToken = null;
     this.logLevel = LogLevel.INFO;
+    this.transportKind = "daily";
   }
 
-  _buildClient(functionsUrl) {
+  _buildTransport(functionsUrl, transportKind) {
+    if (transportKind === "smallwebrtc") {
+      return new SmallWebRTCTransport({
+        offerUrlTemplate: `${functionsUrl}/start/:sessionId/api/offer`,
+        mediaManager: new NoopMediaManager(),
+      });
+    }
+
+    return new RawWebRtcTransport({
+      functionsUrl,
+      accessToken: this.accessToken,
+    });
+  }
+
+  _buildClient(functionsUrl, transportKind) {
     const client = new PipecatClient({
-      transport: new RawWebRtcTransport({
-        functionsUrl,
-        accessToken: this.accessToken,
-      }),
+      transport: this._buildTransport(functionsUrl, transportKind),
       enableMic: false,
       enableCam: false,
       callbacks: {
@@ -206,7 +252,7 @@ class SmallWebRtcBridge {
     return client;
   }
 
-  async _replaceClient(functionsUrl) {
+  async _replaceClient(functionsUrl, transportKind) {
     if (this.client) {
       try {
         await this.client.disconnect();
@@ -217,29 +263,40 @@ class SmallWebRtcBridge {
         });
       }
     }
-    this.client = this._buildClient(functionsUrl);
+    this.transportKind = transportKind;
+    this.client = this._buildClient(functionsUrl, transportKind);
     return this.client;
   }
 
   async connect(command) {
     const functionsUrl = normalizeFunctionsUrl(command.functionsUrl);
+    const transportKind = normalizeTransport(command.transport);
     this.accessToken = requireString(command.accessToken, "accessToken");
-    const client = await this._replaceClient(functionsUrl);
+    const client = await this._replaceClient(functionsUrl, transportKind);
     const connectTimeoutMs =
       typeof command.connectTimeoutMs === "number" ? command.connectTimeoutMs : 20000;
 
     try {
       if (command.sessionId) {
-        const connectPromise = client.connect({
-            sessionId: requireString(command.sessionId, "sessionId"),
-            requestTimeoutMs:
-              typeof command.requestTimeoutMs === "number"
-                ? command.requestTimeoutMs
-                : undefined,
-          });
+        const sessionId = requireString(command.sessionId, "sessionId");
+        const connectPromise = client.connect(
+          transportKind === "smallwebrtc"
+            ? {
+                iceConfig: command.iceConfig,
+                webrtcRequestParams: buildOfferRequest(command, sessionId),
+              }
+            : {
+                sessionId,
+                requestTimeoutMs:
+                  typeof command.requestTimeoutMs === "number"
+                    ? command.requestTimeoutMs
+                    : undefined,
+              },
+        );
         const ready = await this._awaitConnectReady(client, connectPromise, connectTimeoutMs);
         return {
           mode: "session",
+          transport: transportKind,
           ready: serialize(ready),
         };
       }
@@ -253,11 +310,20 @@ class SmallWebRtcBridge {
         this._awaitConnectReady(
           client,
           client.connect({
-          ...started,
-          requestTimeoutMs:
-            typeof command.requestTimeoutMs === "number"
-              ? command.requestTimeoutMs
-              : undefined,
+            ...started,
+            ...(transportKind === "smallwebrtc"
+              ? {
+                  webrtcRequestParams: buildOfferRequest(
+                    command,
+                    requireString(started?.sessionId, "started.sessionId"),
+                  ),
+                }
+              : {
+                  requestTimeoutMs:
+                    typeof command.requestTimeoutMs === "number"
+                      ? command.requestTimeoutMs
+                      : undefined,
+                }),
           }),
           connectTimeoutMs,
         ),
@@ -266,6 +332,7 @@ class SmallWebRtcBridge {
       );
       return {
         mode: "start",
+        transport: transportKind,
         started: serialize(started),
         ready: serialize(ready),
       };
@@ -350,6 +417,7 @@ class SmallWebRtcBridge {
       hasClient: Boolean(this.client),
       connected: Boolean(this.client?.connected),
       state: this.client?.state ?? "disconnected",
+      transport: this.transportKind,
     };
   }
 
@@ -512,13 +580,17 @@ async function main(argv) {
     process.exit(143);
   });
 
+  process.on("uncaughtException", (error) => {
+    writeFatalAndExit(error, 1);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    writeFatalAndExit(reason, 1);
+  });
+
   return 0;
 }
 
 main(process.argv.slice(2)).catch((error) => {
-  writeMessage({
-    type: "fatal",
-    error: serializeError(error),
-  });
-  process.exit(1);
+  writeFatalAndExit(error, 1);
 });

@@ -84,6 +84,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_start_options(start_session)
     _add_common_config_args(start_session)
 
+    leaderboard_resources = sub.add_parser(
+        "leaderboard-resources",
+        help="Call the public leaderboard_resources endpoint",
+    )
+    leaderboard_resources.add_argument("--force-refresh", action="store_true")
+    _add_common_config_args(leaderboard_resources)
+
     signup_and_start = sub.add_parser(
         "signup-and-start",
         help="Two-step bootstrap: register first, then rerun with --verify-url to finish",
@@ -491,6 +498,12 @@ async def dispatch(args: argparse.Namespace) -> int:
                 access_token=_require_access_token(args.access_token, config),
                 options=_start_options_from_args(args, config),
             )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "leaderboard-resources":
+        async with HeadlessApiClient(config) as client:
+            result = await client.leaderboard_resources(force_refresh=args.force_refresh)
             print(dump_json(result))
             return 0
 
@@ -1093,6 +1106,7 @@ def _session_connect_options_from_args(
     return SessionConnectOptions(
         access_token=access_token,
         functions_url=config.functions_url,
+        transport=args.transport,
         character_id=character_id,
         session_id=session_id,
         connect_timeout_ms=args.connect_timeout_ms,

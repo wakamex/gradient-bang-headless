@@ -17,6 +17,12 @@ transport path focused on:
 It still needs WebRTC primitives, so it installs `@roamhq/wrtc` and maps those
 globals into Node before creating the Pipecat client.
 
+Two bridge modes are supported:
+
+- `daily`: the existing raw Node transport around `createDailyRoom=true`
+- `smallwebrtc`: the official frontend `@pipecat-ai/small-webrtc-transport`
+  with a no-op media manager
+
 ## Setup
 
 ```bash
@@ -36,7 +42,7 @@ newline-delimited JSON responses/events to `stdout`.
 Example session:
 
 ```json
-{"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","bypassTutorial":true,"connectTimeoutMs":8000,"requestTimeoutMs":8000}
+{"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","characterId":"...","transport":"daily","bypassTutorial":true,"connectTimeoutMs":8000,"requestTimeoutMs":8000}
 {"id":"2","op":"sendClientMessage","messageType":"start","data":{}}
 {"id":"3","op":"sendClientRequest","messageType":"get-my-status","data":{}}
 {"id":"4","op":"sendClientMessage","messageType":"user-text-input","data":{"text":"plot a safe course"}}
@@ -47,14 +53,20 @@ Example session:
 The bridge also supports direct reconnect by existing bot session:
 
 ```json
-{"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","sessionId":"..."}
+{"id":"1","op":"connect","functionsUrl":"https://api.gradient-bang.com/functions/v1","accessToken":"...","sessionId":"...","transport":"daily"}
 ```
 
 ## Current Status
 
 - The bridge process, JSON protocol, and Node WebRTC runtime are working.
-- Production validation reaches transport `ready` in pure Node.
-- The current bootstrap path uses `start(createDailyRoom=true)` and then raw
+- Production validation reaches transport `ready` in pure Node on the `daily`
+  bridge mode.
+- The `daily` bootstrap path uses `start(createDailyRoom=true)` and then raw
   `/start/{sessionId}/api/offer`.
+- The `smallwebrtc` bridge mode now uses the same transport package as the
+  browser client.
+- The public `smallwebrtc` path still hangs at `/start/{sessionId}/api/offer`
+  under pure Node, but now fails on explicit bridge timeouts instead of waiting
+  forever.
 - Pipecat app-level frames are still blocked: `bot_ready` and semantic server
   events have not yet been observed on the public path.

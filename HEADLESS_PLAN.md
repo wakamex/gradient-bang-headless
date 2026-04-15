@@ -44,6 +44,7 @@ Implemented and production-proven:
 - character creation
 - character visibility polling
 - session creation through `/start`
+- public leaderboard reads through `leaderboard_resources`
 
 ### Protected Edge Functions
 
@@ -61,6 +62,7 @@ In progress:
 - raw WebRTC bridge process in Node
 - JSON-lines bridge protocol
 - Node WebRTC globals via `@roamhq/wrtc`
+- official `smallwebrtc` bridge mode via the frontend transport package
 - Python wrapper for the bridge process
 - CLI session commands for bridge-driven connect/request/message/text flows
 - CLI raw event watching through `session-watch`
@@ -76,10 +78,77 @@ Latest narrowing:
 
 - `start` succeeds live
 - the raw Node bridge reaches transport `ready`
-- `createDailyRoom=false` sessions still hang on `/api/offer`
+- `start --transport smallwebrtc` returns a real `sessionId` plus `iceConfig`
+- official pure-Node `smallwebrtc` still hangs on `/api/offer`
 - `createDailyRoom=true` sessions answer `/api/offer` and open a datachannel
 - Pipecat app-level frames are still missing on the public path
 - `session-watch` confirms that even explicit `start` messages currently produce no server events
+
+### Current Live State
+
+Latest live read from `user_character_list`:
+
+- character: `gbheadless19873`
+- ship: `sparrow_scout`
+- sector: `1413`
+- ship credits: `12,865`
+- cargo: `retro_organics=20`
+- fighters: `200`
+- warp power: `386`
+
+That confirms the live character still exists and can be inspected through the
+public JWT surface, but gameplay progression remains blocked on the public
+session transport rather than account/bootstrap state.
+
+## Endpoint Coverage
+
+Canonical source of truth: [upstream/API.md](/code/gradient/upstream/API.md)
+
+- total documented edge-function endpoints: `60`
+- first-class canonical endpoints currently covered in the headless client: `20`
+- direct first-class coverage: about `33%`
+
+Covered today:
+
+- public control plane:
+  - `register`
+  - `login`
+  - `user_character_list`
+  - `user_character_create`
+  - `start`
+  - `leaderboard_resources`
+- trusted gameplay edge functions:
+  - `my_status`
+  - `move`
+  - `plot_course`
+  - `local_map_region`
+  - `list_known_ports`
+  - `trade`
+  - `recharge_warp_power`
+  - `purchase_fighters`
+  - `ship_definitions`
+  - `ship_purchase`
+  - `quest_assign`
+  - `quest_status`
+  - `quest_claim_reward`
+  - `events_since`
+
+Covered indirectly, but not counted in the `20`:
+
+- generic raw edge-function calls through `call` and `game-call`
+- session-semantic commands such as `session-start`, `session-status`,
+  `session-known-ports`, `session-map`, `session-assign-quest`,
+  `session-claim-reward`, `session-cancel-task`, `session-skip-tutorial`,
+  and `session-user-text`
+- Supabase verify-link confirmation through `confirm-url`
+
+Interpretation:
+
+- the headless client already covers the public bootstrap path cleanly
+- it also covers a small but useful slice of protected gameplay RPCs
+- the biggest remaining gap is not scaffolding, but access: most gameplay
+  endpoints still require trusted `X-API-Token` auth or a working public
+  session transport
 
 ## Planned Commit Sequence
 
@@ -178,7 +247,8 @@ If a phase is blocked, the next commit should improve one of:
 Observed production behavior:
 
 - `start` succeeds
-- `createDailyRoom=false` sessions hang at `/start/{sessionId}/api/offer`
+- `createDailyRoom=false` sessions return `sessionId` + `iceConfig`, but pure
+  Node still hangs at `/start/{sessionId}/api/offer`
 - `createDailyRoom=true` sessions reach transport `ready`
 - `bot_ready` and gameplay server events still do not arrive on the public path
 
@@ -191,7 +261,9 @@ Current mitigation:
 Current next diagnostic:
 
 - identify why the daily-bootstrapped `/api/offer` path opens a datachannel but stays silent
-- determine whether pure Node Daily transport is practical with additional runtime shims
+- identify why the official `smallwebrtc` Node path still never gets an offer
+  response from `/api/offer`
+- determine whether a pure Node Daily transport is practical with additional runtime shims
 
 ### Public Gameplay API Access
 

@@ -209,6 +209,18 @@ class HeadlessApiClient:
             access_token=access_token,
         )
 
+    async def leaderboard_resources(
+        self,
+        *,
+        force_refresh: bool = False,
+    ) -> Any:
+        params = {"force_refresh": "true"} if force_refresh else None
+        return await self.request(
+            "leaderboard_resources",
+            method="GET",
+            params=params,
+        )
+
     async def wait_for_character(
         self,
         *,
