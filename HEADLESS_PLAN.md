@@ -97,6 +97,7 @@ Newest runner hardening:
 
 - hosted-browser connect now distinguishes initial shell paint from actual interactive readiness
 - command submission now targets the enabled command field instead of the first input on the page
+- button clicks now fall back to raw DOM text matching when role-based lookup fails
 
 Newest long-task support:
 
@@ -220,6 +221,18 @@ Success condition:
 
 - long contract steps like travel or trading can be observed to completion
   without reissuing the same command every minute
+
+### 10. DOM-Text Button Fallback
+
+Commit scope:
+
+- harden `browser-click` when `getByRole(...button...)` fails
+- fall back to matching actual `button` text in the DOM and clicking it directly
+
+Success condition:
+
+- headless automation can drive tab-like controls such as `Contracts` even when
+  ARIA-role lookup is unreliable
 
 ## Definition Of “As Far As Possible”
 

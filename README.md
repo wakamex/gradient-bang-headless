@@ -22,6 +22,7 @@ This scaffold supports:
 - a contract loop runner that repeats tutorial/contract advancement prompts
 - a stricter hosted-browser readiness check that waits for an interactive command shell
 - a command-watch mode for long-running in-game tasks
+- a browser-click fallback that targets DOM button text when ARIA-role lookup is insufficient
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -129,6 +130,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - hosted-browser connect now waits for an enabled command field instead of returning during `INITIALIZING GAME INSTANCES...`.
 - `browser-command-watch` is intended for long-running local tasks like travel or trading: it sends one command and then polls status until the engine settles or the watch timeout expires.
 - `browser-command-watch` treats `IDLE`, `COMPLETED`, and `FAILED` as terminal states so bad plans return control immediately instead of burning the full timeout.
+- `browser-click` now falls back to direct DOM button-text matching, which helps with tabs and controls that exist in the DOM but are awkward through ARIA-role lookup.
 - the hosted client currently defaults to Daily transport in production and is the deepest proven public gameplay path so far.
 - `browser-command` has been proven live for in-game text submission after the hosted client reaches control.
 - `browser-sequence` has been proven live for same-session travel and the first tutorial contract step.

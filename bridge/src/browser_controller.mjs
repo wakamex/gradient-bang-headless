@@ -42,6 +42,10 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function normalizeText(value) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function serialize(value) {
   if (value === undefined) {
     return null;
@@ -233,12 +237,33 @@ class HostedGameBrowser {
     const waitAfterMs = numberOr(command.waitAfterMs, 5000);
     const matcher = new RegExp(`^${escapeRegExp(label)}$`, "i");
     const locator = this.page.getByRole("button", { name: matcher }).first();
+    const normalizedLabel = normalizeText(label);
 
-    await locator.waitFor({
-      state: "visible",
-      timeout: numberOr(command.timeoutMs, 120000),
-    });
-    await locator.click({ force: booleanOr(command.force, false) });
+    try {
+      await locator.waitFor({
+        state: "visible",
+        timeout: numberOr(command.timeoutMs, 120000),
+      });
+      await locator.click({ force: booleanOr(command.force, false) });
+    } catch {
+      await this.page.waitForFunction(
+        (expected) =>
+          Array.from(document.querySelectorAll("button")).some(
+            (node) => node.textContent?.trim().replace(/\s+/g, " ").toLowerCase() === expected,
+          ),
+        normalizedLabel,
+        { timeout: numberOr(command.timeoutMs, 120000) },
+      );
+      await this.page.evaluate((expected) => {
+        const button = Array.from(document.querySelectorAll("button")).find(
+          (node) => node.textContent?.trim().replace(/\s+/g, " ").toLowerCase() === expected,
+        );
+        if (!button) {
+          throw new Error(`button not found by text: ${expected}`);
+        }
+        button.click();
+      }, normalizedLabel);
+    }
 
     if (waitAfterMs > 0) {
       await this.page.waitForTimeout(waitAfterMs);
