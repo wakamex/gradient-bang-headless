@@ -37,6 +37,8 @@ class HeadlessConfig:
     access_token: str | None = None
     character_id: str | None = None
     actor_character_id: str | None = None
+    node_binary: str | None = None
+    bridge_dir: str | None = None
 
     @classmethod
     def from_env(cls) -> "HeadlessConfig":
@@ -52,4 +54,6 @@ class HeadlessConfig:
             access_token=os.getenv("GB_ACCESS_TOKEN"),
             character_id=os.getenv("GB_CHARACTER_ID"),
             actor_character_id=os.getenv("GB_ACTOR_CHARACTER_ID"),
+            node_binary=os.getenv("GB_NODE_BINARY"),
+            bridge_dir=os.getenv("GB_BRIDGE_DIR"),
         )

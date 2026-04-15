@@ -16,6 +16,7 @@ This scaffold supports:
 - generic edge-function calls against `https://api.gradient-bang.com/functions/v1`
 - `events_since` polling for request/event correlation
 - a text-first Node SmallWebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
+- Python/CLI bridge integration for `smallwebrtc` session connect/request/message flows
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -59,6 +60,19 @@ gb-headless signup-and-start \
   --password 'secret' \
   --name 'My Pilot' \
   --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
+gb-headless session-connect --character-id "$GB_CHARACTER_ID" --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-request \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --message-type get-my-status
+gb-headless session-message \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --message-type start
+gb-headless session-send-text \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --content 'plot a safe course'
 gb-headless call leaderboard_resources --method GET
 gb-headless game-call my_status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN" --follow
@@ -71,6 +85,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `game-call` auto-injects `character_id` and `actor_character_id` when configured.
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.
 - the Node bridge is text-first: it skips mic/camera capture, but still needs Node WebRTC support through `@roamhq/wrtc`.
+- `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
 - `signup-and-start` is a practical two-pass CLI flow:

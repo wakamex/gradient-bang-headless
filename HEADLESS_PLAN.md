@@ -59,6 +59,8 @@ In progress:
 - `smallwebrtc` bridge process in Node
 - JSON-lines bridge protocol
 - Node WebRTC globals via `@roamhq/wrtc`
+- Python wrapper for the bridge process
+- CLI session commands for bridge-driven connect/request/message/text flows
 - production path reaches:
   `start -> /start/{sessionId}/api/offer -> connecting`
 
@@ -177,5 +179,6 @@ surface over direct edge-function gameplay calls.
 
 ## Immediate Next Step
 
-Integrate the bridge into the Python client and CLI so the current transport
-work is usable from one consistent headless interface.
+Keep pushing transport reachability with the new Python/CLI bridge integration,
+then add first-class session action helpers and continue testing production
+paths until the next real blocker is isolated.

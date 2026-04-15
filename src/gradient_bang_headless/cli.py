@@ -7,6 +7,7 @@ import sys
 from typing import Any
 
 from .config import HeadlessConfig
+from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
 from .http import (
     EventScope,
     HeadlessApiClient,
@@ -26,10 +27,14 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(dispatch(args))
     except KeyboardInterrupt:
         return 130
-    except HeadlessApiError as exc:
+    except (HeadlessApiError, HeadlessBridgeError) as exc:
         print(str(exc), file=sys.stderr)
-        if exc.payload is not None:
-            print(dump_json(exc.payload), file=sys.stderr)
+        payload = getattr(exc, "payload", None)
+        if payload is not None:
+            print(dump_json(payload), file=sys.stderr)
+        stderr_tail = getattr(exc, "stderr_tail", None)
+        if stderr_tail:
+            print("\n".join(stderr_tail), file=sys.stderr)
         return 1
 
 
@@ -82,6 +87,38 @@ def build_parser() -> argparse.ArgumentParser:
     _add_start_options(signup_and_start)
     _add_common_config_args(signup_and_start)
 
+    session_connect = sub.add_parser(
+        "session-connect",
+        help="Open a SmallWebRTC session through the Node bridge and report connect state",
+    )
+    _add_session_connect_args(session_connect)
+
+    session_request = sub.add_parser(
+        "session-request",
+        help="Connect a SmallWebRTC session, send one client request, and close",
+    )
+    _add_session_connect_args(session_request)
+    session_request.add_argument("--message-type", required=True)
+    session_request.add_argument("--data", default="{}")
+    session_request.add_argument("--timeout-ms", type=int)
+
+    session_message = sub.add_parser(
+        "session-message",
+        help="Connect a SmallWebRTC session, send one client message, and close",
+    )
+    _add_session_connect_args(session_message)
+    session_message.add_argument("--message-type", required=True)
+    session_message.add_argument("--data", default="{}")
+    session_message.add_argument("--wait-seconds", type=float, default=0.0)
+
+    session_send_text = sub.add_parser(
+        "session-send-text",
+        help="Connect a SmallWebRTC session, send text to the bot, and close",
+    )
+    _add_session_connect_args(session_send_text)
+    session_send_text.add_argument("--content", required=True)
+    session_send_text.add_argument("--wait-seconds", type=float, default=0.0)
+
     call = sub.add_parser("call", help="Generic edge-function call")
     call.add_argument("endpoint")
     call.add_argument("--method", default="POST", choices=["GET", "POST"])
@@ -128,6 +165,21 @@ def _add_start_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--voice-id")
     parser.add_argument("--personality-tone")
     parser.add_argument("--character-name")
+
+
+def _add_session_connect_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--access-token")
+    parser.add_argument("--character-id")
+    parser.add_argument("--session-id")
+    parser.add_argument("--connect-timeout-ms", type=int, default=20_000)
+    parser.add_argument("--request-timeout-ms", type=int, default=20_000)
+    parser.add_argument(
+        "--bridge-log-level",
+        choices=["none", "error", "warn", "info", "debug"],
+        default="none",
+    )
+    _add_start_options(parser)
+    _add_common_config_args(parser)
 
 
 async def dispatch(args: argparse.Namespace) -> int:
@@ -185,6 +237,79 @@ async def dispatch(args: argparse.Namespace) -> int:
                 poll_interval=args.poll_interval,
             )
             print(dump_json(result))
+            return 0
+
+    if args.command == "session-connect":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            result = await bridge.connect(_session_connect_options_from_args(args, config))
+            print(
+                dump_json(
+                    {
+                        "connect": result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-request":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            request_result = await bridge.send_client_request(
+                args.message_type,
+                _parse_json_object(args.data),
+                timeout_ms=args.timeout_ms,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": request_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-message":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            send_result = await bridge.send_client_message(
+                args.message_type,
+                _parse_json_object(args.data),
+            )
+            if args.wait_seconds > 0:
+                await asyncio.sleep(args.wait_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": send_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-send-text":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            send_result = await bridge.send_text(args.content)
+            if args.wait_seconds > 0:
+                await asyncio.sleep(args.wait_seconds)
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": send_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
             return 0
 
     if args.command == "call":
@@ -258,6 +383,32 @@ def config_from_args(args: argparse.Namespace) -> HeadlessConfig:
 def _start_options_from_args(args: argparse.Namespace) -> StartOptions:
     return StartOptions(
         transport=args.transport,
+        bypass_tutorial=args.bypass_tutorial,
+        voice_id=args.voice_id,
+        personality_tone=args.personality_tone,
+        character_name=args.character_name,
+    )
+
+
+def _session_connect_options_from_args(
+    args: argparse.Namespace,
+    config: HeadlessConfig,
+) -> SessionConnectOptions:
+    access_token = _require_access_token(args.access_token, config)
+    character_id = args.character_id or config.character_id
+    session_id = getattr(args, "session_id", None)
+    if not character_id and not session_id:
+        raise HeadlessBridgeError(
+            "cli",
+            "missing --character-id/GB_CHARACTER_ID or --session-id",
+        )
+    return SessionConnectOptions(
+        access_token=access_token,
+        functions_url=config.functions_url,
+        character_id=character_id,
+        session_id=session_id,
+        connect_timeout_ms=args.connect_timeout_ms,
+        request_timeout_ms=args.request_timeout_ms,
         bypass_tutorial=args.bypass_tutorial,
         voice_id=args.voice_id,
         personality_tone=args.personality_tone,
