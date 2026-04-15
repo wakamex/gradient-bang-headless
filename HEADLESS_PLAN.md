@@ -69,6 +69,13 @@ Not yet proven:
 - Pipecat `bot_ready`
 - transport-level command exchange after WebRTC connect
 
+Latest narrowing:
+
+- `start` succeeds live
+- the Node bridge receives a real `sessionId` and ICE config
+- the pure Node path hangs specifically on `POST /start/{sessionId}/api/offer`
+- browser-hosted production traffic is using Daily websocket signaling, not the pure Node path
+
 ### Hosted Browser Runtime
 
 Proven live against production:
@@ -80,30 +87,14 @@ Proven live against production:
 - the command input is present in the rendered game shell
 - live command submission through the hosted client works
 
-Still being pushed:
+Reclassification after audit:
 
-- deterministic tutorial skip behavior
-- higher-level gameplay automation on top of the hosted client
-
-Newest proven gameplay capability:
-
-- same-session browser action sequences
-- live command chaining inside one hosted session
-- travel from sector `4658` to adjacent sector `301`
-- completion of the first `TAKING FLIGHT` contract step
-- completion of the next tutorial steps through mega-port arrival, refuel, and commodity purchase
-
-Newest runner hardening:
-
-- hosted-browser connect now distinguishes initial shell paint from actual interactive readiness
-- command submission now targets the enabled command field instead of the first input on the page
-- button clicks now fall back to raw DOM text matching when role-based lookup fails
-
-Newest long-task support:
-
-- a watch mode can now keep a session open and poll status while a local task runs
-- long-running travel or trading objectives no longer require repeated prompt spam just to observe completion
-- failed task plans now stop the watcher immediately instead of waiting out the full timeout
+- browser login and character selection remain acceptable bootstrap steps
+- browser command typing and DOM button clicking are now fallback-only tooling
+- the real target is semantic transport injection:
+  - direct edge-function calls when possible
+  - direct Pipecat/RTVI messages when gameplay is session-mediated
+  - browser UI only when no backend or transport path exists yet
 
 ## Planned Commit Sequence
 
@@ -118,121 +109,75 @@ Success condition:
 
 - repo contains a concrete execution plan and feature ledger
 
-### 2. Python Bridge Integration
+### 2. First-Class Edge Gameplay Methods
 
 Commit scope:
 
-- add Python wrapper for the `bridge/` process
-- add CLI commands to drive bridge operations
-- make the bridge usable from the same `gb-headless` entrypoint
+- replace generic protected gameplay calls with named client methods
+- expose named CLI commands for the proven edge-function surface
+- remove pressure to use browser prompts for actions that already have direct RPCs
 
 Success condition:
 
-- user can start the bridge, connect, send client messages, request status,
-  and close it from Python/CLI without hand-writing raw JSON
+- trusted users can call common gameplay endpoints without hand-writing JSON or endpoint names
 
-### 3. Headless Session Actions
+### 3. Semantic Session Actions
 
 Commit scope:
 
-- add first-class actions for RTVI/game control messages:
+- add first-class commands for typed session messages and requests
+- focus on frontend-proven actions such as:
   - `start`
   - `get-my-status`
   - `get-known-ports`
-  - `user-text-input`
+  - `get-task-history`
+  - `get-my-map`
+  - `assign-quest`
+  - `claim-step-reward`
+  - `cancel-task`
   - `skip-tutorial`
+  - `user-text-input`
 
 Success condition:
 
-- if the transport is connected, these actions are reachable from CLI/Python
+- session-mediated gameplay is reachable from CLI/Python without browser UI gestures
 
-### 4. Transport Investigation
+### 4. Semantic Browser Transport Fallback
+
+Commit scope:
+
+- keep the browser only as a transport host for production
+- inject typed RTVI messages into the live transport instead of clicking UI
+- capture typed responses/events for request/response flows
+
+Success condition:
+
+- the hosted client can be driven by semantic actions without DOM clicks or prompt text
+
+### 5. Node Transport Investigation
 
 Commit scope:
 
 - keep pushing pure Node `smallwebrtc`
-- instrument offer/connect phases
-- tighten timeouts and error reporting
-- test live against production after each meaningful change
+- instrument `api/offer` behavior
+- tighten timeout and failure reporting around the offer phase
+- compare request shape against the successful browser transport when needed
 
 Success condition:
 
-- either reach `bot_ready`, or reduce the remaining gap to a single clear issue
+- either reach `bot_ready`, or reduce the remaining gap to one concrete incompatibility
 
-### 5. Browser-Hosted Fallback Bridge
+### 6. Progression Loop
 
 Commit scope:
 
-- implement a browser-hosted runner that preserves the same JSON protocol
-- drive the live hosted client through login, character selection, and in-game state
-- use the browser runtime when pure Node transport stalls
+- use the strongest available headless path to keep advancing the live character
+- write down each proven capability in docs as it lands
+- commit each incremental feature before using it to go further
 
 Success condition:
 
-- reach `bot_ready` and begin issuing headless actions through the hosted client
-
-### 6. Same-Session Browser Sequences
-
-Commit scope:
-
-- add a `browser-sequence` CLI action
-- allow `command`, `click`, `status`, `wait`, and `screenshot` steps
-- keep one hosted browser session alive across the full sequence
-
-Success condition:
-
-- live gameplay can progress across multiple dependent actions without
-  reconnecting between them
-
-### 7. Contract Progress Loop
-
-Commit scope:
-
-- add a `browser-contract-loop` CLI action
-- repeat the proven advancement prompt inside one hosted browser session
-- capture a status snapshot after each iteration
-
-Success condition:
-
-- tutorial or contract progression can be driven for several iterations without
-  hand-writing a JSON sequence each time
-
-### 8. Interactive Shell Readiness
-
-Commit scope:
-
-- make hosted-browser connect wait for an enabled command field
-- avoid reporting success during `INITIALIZING GAME INSTANCES...`
-- make command submission target the actual enabled command field
-
-Success condition:
-
-- browser-driven command loops no longer race the hosted client boot sequence
-
-### 9. Long-Running Task Watch
-
-Commit scope:
-
-- add a `browser-command-watch` CLI action
-- send one command, then poll browser status until the local task engine settles
-- record intermediate snapshots for inspection
-
-Success condition:
-
-- long contract steps like travel or trading can be observed to completion
-  without reissuing the same command every minute
-
-### 10. DOM-Text Button Fallback
-
-Commit scope:
-
-- harden `browser-click` when `getByRole(...button...)` fails
-- fall back to matching actual `button` text in the DOM and clicking it directly
-
-Success condition:
-
-- headless automation can drive tab-like controls such as `Contracts` even when
-  ARIA-role lookup is unreliable
+- the repo keeps moving deeper into real gameplay even when one transport path stalls
 
 ## Definition Of “As Far As Possible”
 
@@ -270,6 +215,11 @@ Current mitigation:
 - bridge-level `requestTimeoutMs`
 - clean disconnect on timeout
 
+Current next diagnostic:
+
+- compare the pure Node `api/offer` request shape with the successful browser-hosted production session
+- prefer semantic browser transport injection over UI clicks while the Node gap remains unresolved
+
 ### Public Gameplay API Access
 
 Most direct gameplay edge functions still require `X-API-Token`.
@@ -279,6 +229,7 @@ surface over direct edge-function gameplay calls.
 
 ## Immediate Next Step
 
-Use the contract loop to keep advancing the starter contract line, and only add
-more DOM-level or data-extraction features if the assistant stops being able to
-complete the next step from text commands alone.
+1. replace generic gameplay calls with named edge-function methods and CLI commands
+2. replace browser UI actions with typed session actions wherever the frontend proves them
+3. use browser runtime only as a semantic transport fallback while Node `api/offer` is unresolved
+4. keep pushing the live character forward and record each newly proven capability

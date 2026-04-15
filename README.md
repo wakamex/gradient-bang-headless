@@ -13,16 +13,13 @@ This repo is the home for a headless client and automation tooling for Gradient 
 This scaffold supports:
 
 - public control-plane calls like `register`, `login`, `user_character_create`, and `start`
+- named protected gameplay calls for trusted use
 - generic edge-function calls against `https://api.gradient-bang.com/functions/v1`
 - `events_since` polling for request/event correlation
 - a text-first Node SmallWebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
 - Python/CLI bridge integration for `smallwebrtc` session connect/request/message flows
 - a hosted-browser runner for the live `game.gradient-bang.com` client
-- a same-session browser sequence runner for multi-step gameplay automation
-- a contract loop runner that repeats tutorial/contract advancement prompts
-- a stricter hosted-browser readiness check that waits for an interactive command shell
-- a command-watch mode for long-running in-game tasks
-- a browser-click fallback that targets DOM button text when ARIA-role lookup is insufficient
+- browser-based diagnostics and fallback automation for production transport gaps
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -113,14 +110,14 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.
 - the Node bridge is text-first: it skips mic/camera capture, but still needs Node WebRTC support through `@roamhq/wrtc`.
 - `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
-- `browser-connect`, `browser-click`, and `browser-command` drive the live hosted client in headless Chromium.
-- `browser-sequence` keeps one hosted browser session alive across multiple steps, which is required for reliable movement and contract progression.
-- `browser-contract-loop` repeatedly submits the proven progression prompt inside one hosted session and records a status snapshot after each iteration.
+- browser commands are fallback and debugging tools, not the preferred gameplay path.
+- the preferred order is:
+  direct edge-function method, then direct session message, then browser automation only as a last resort.
 - hosted-browser connect now waits for an enabled command field instead of returning during `INITIALIZING GAME INSTANCES...`.
 - `browser-command-watch` is intended for long-running local tasks like travel or trading: it sends one command and then polls status until the engine settles or the watch timeout expires.
 - `browser-command-watch` treats `IDLE`, `COMPLETED`, and `FAILED` as terminal states so bad plans return control immediately instead of burning the full timeout.
 - `browser-click` now falls back to direct DOM button-text matching, which helps with tabs and controls that exist in the DOM but are awkward through ARIA-role lookup.
-- the hosted client currently defaults to Daily transport in production and is the deepest proven public gameplay path so far.
+- the hosted client currently appears to use Daily transport in production, while the pure Node `smallwebrtc` path still stalls at `/start/{sessionId}/api/offer`.
 - `browser-command` has been proven live for in-game text submission after the hosted client reaches control.
 - `browser-sequence` has been proven live for same-session travel and the first tutorial contract step.
 - `signup-and-start` is the proven public bootstrap flow:

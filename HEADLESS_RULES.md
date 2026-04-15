@@ -75,6 +75,27 @@ When adding a new headless feature, default in this order:
 
 If a feature currently needs the browser, the next question should be: "What semantic action is this UI actually triggering?"
 
+## Credentials And Config
+
+1. Keep local login credentials and tokens in the repo-root `.env`.
+2. Keep the tracked `.env.example` as the canonical list of required variables for setup.
+3. Load defaults from `.env` in the client instead of hardcoding credentials into commands, code, or docs.
+4. Treat `.env.example` as documentation and interface contract, not a place for real secrets.
+5. Add new auth or session variables to `.env.example` as soon as a feature depends on them.
+6. Prefer stable names under the `GB_` prefix for all headless-client configuration.
+
+Current expected variables include:
+
+- `GB_FUNCTIONS_URL`
+- `GB_SITE_URL`
+- `GB_EMAIL`
+- `GB_PASSWORD`
+- `GB_CHARACTER_NAME`
+- `GB_API_TOKEN`
+- `GB_ACCESS_TOKEN`
+- `GB_CHARACTER_ID`
+- `GB_ACTOR_CHARACTER_ID`
+
 ## Key Files
 
 - `upstream/client/app/src/stores/game.ts`
@@ -82,3 +103,5 @@ If a feature currently needs the browser, the next question should be: "What sem
 - `upstream/src/gradientbang/pipecat_server/client_message_handler.py`
 - `upstream/src/gradientbang/utils/api_client.py`
 - `upstream/src/gradientbang/utils/supabase_client.py`
+- `.env.example`
+- `src/gradient_bang_headless/config.py`
