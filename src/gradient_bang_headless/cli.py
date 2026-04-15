@@ -136,6 +136,13 @@ def build_parser() -> argparse.ArgumentParser:
     browser_command.add_argument("--wait-after-ms", type=int, default=15_000)
     browser_command.add_argument("--skip-input-wait", action="store_true")
 
+    browser_sequence = sub.add_parser(
+        "browser-sequence",
+        help="Open the hosted game client in a browser, run a JSON step list, and close",
+    )
+    _add_browser_connect_args(browser_sequence)
+    browser_sequence.add_argument("--steps", required=True)
+
     browser_click = sub.add_parser(
         "browser-click",
         help="Open the hosted game client in a browser, click one button, and close",
@@ -386,6 +393,70 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "browser-sequence":
+        async with HostedGameBrowserProcess(config) as browser:
+            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            steps = _parse_json_array(args.steps)
+            results: list[dict[str, Any]] = []
+            for index, step in enumerate(steps):
+                step_type = step.get("type")
+                if step_type == "command":
+                    result = await browser.send_command(
+                        _require_browser_step_string(step, "text"),
+                        wait_after_ms=int(step.get("wait_after_ms", 15_000)),
+                        wait_for_input_enabled=not bool(step.get("skip_input_wait", False)),
+                        input_timeout_ms=int(step.get("input_timeout_ms", 180_000)),
+                        body_text_limit=int(step.get("body_text_limit", args.body_text_limit)),
+                    )
+                elif step_type == "click":
+                    result = await browser.click_button(
+                        _require_browser_step_string(step, "label"),
+                        wait_after_ms=int(step.get("wait_after_ms", 5_000)),
+                        timeout_ms=int(step.get("timeout_ms", 120_000)),
+                        force=bool(step.get("force", False)),
+                        body_text_limit=int(step.get("body_text_limit", args.body_text_limit)),
+                    )
+                elif step_type == "status":
+                    result = await browser.status(
+                        body_text_limit=int(step.get("body_text_limit", args.body_text_limit))
+                    )
+                elif step_type == "wait":
+                    wait_ms = int(step.get("wait_ms", 0))
+                    if wait_ms < 0:
+                        raise HeadlessBrowserError(
+                            "browser-sequence",
+                            f"wait_ms must be >= 0 at index {index}",
+                        )
+                    await asyncio.sleep(wait_ms / 1000.0)
+                    result = {"waited_ms": wait_ms}
+                elif step_type == "screenshot":
+                    result = await browser.screenshot(
+                        _require_browser_step_string(step, "path"),
+                        full_page=bool(step.get("full_page", True)),
+                    )
+                else:
+                    raise HeadlessBrowserError(
+                        "browser-sequence",
+                        f"unsupported step type at index {index}: {step_type!r}",
+                    )
+                results.append(
+                    {
+                        "index": index,
+                        "type": step_type,
+                        "result": result,
+                    }
+                )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "results": results,
+                        "events": await browser.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "browser-click":
         async with HostedGameBrowserProcess(config) as browser:
             connect_result = await browser.connect(_browser_connect_options_from_args(args))
@@ -532,10 +603,24 @@ def _require_access_token(raw: str | None, config: HeadlessConfig) -> str:
     return token
 
 
+def _require_browser_step_string(step: dict[str, Any], key: str) -> str:
+    value = step.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise HeadlessBrowserError("browser-sequence", f"step field {key!r} is required")
+    return value
+
+
 def _parse_json_object(raw: str) -> dict[str, Any]:
     parsed = json.loads(raw)
     if not isinstance(parsed, dict):
         raise HeadlessApiError("cli", 0, "expected a JSON object")
+    return parsed
+
+
+def _parse_json_array(raw: str) -> list[dict[str, Any]]:
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list) or any(not isinstance(item, dict) for item in parsed):
+        raise HeadlessApiError("cli", 0, "expected a JSON array of objects")
     return parsed
 
 

@@ -18,6 +18,7 @@ This scaffold supports:
 - a text-first Node SmallWebRTC bridge in [bridge/README.md](/code/gradient/bridge/README.md)
 - Python/CLI bridge integration for `smallwebrtc` session connect/request/message flows
 - a hosted-browser runner for the live `game.gradient-bang.com` client
+- a same-session browser sequence runner for multi-step gameplay automation
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -88,6 +89,11 @@ gb-headless browser-command \
   --password 'secret' \
   --character-name 'My Pilot' \
   --text 'plot a safe course'
+gb-headless browser-sequence \
+  --email you@example.com \
+  --password 'secret' \
+  --character-name 'My Pilot' \
+  --steps '[{"type":"command","text":"show my contracts panel"},{"type":"command","text":"find the nearest mega-port and take us there"}]'
 gb-headless call leaderboard_resources --method GET
 gb-headless game-call my_status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN" --follow
@@ -102,8 +108,10 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - the Node bridge is text-first: it skips mic/camera capture, but still needs Node WebRTC support through `@roamhq/wrtc`.
 - `session-connect`, `session-request`, `session-message`, and `session-send-text` use the Node bridge from the same `gb-headless` CLI.
 - `browser-connect`, `browser-click`, and `browser-command` drive the live hosted client in headless Chromium.
+- `browser-sequence` keeps one hosted browser session alive across multiple steps, which is required for reliable movement and contract progression.
 - the hosted client currently defaults to Daily transport in production and is the deepest proven public gameplay path so far.
 - `browser-command` has been proven live for in-game text submission after the hosted client reaches control.
+- `browser-sequence` has been proven live for same-session travel and the first tutorial contract step.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
 - `signup-and-start` is a practical two-pass CLI flow:

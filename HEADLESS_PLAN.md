@@ -85,6 +85,13 @@ Still being pushed:
 - deterministic tutorial skip behavior
 - higher-level gameplay automation on top of the hosted client
 
+Newest proven gameplay capability:
+
+- same-session browser action sequences
+- live command chaining inside one hosted session
+- travel from sector `4658` to adjacent sector `301`
+- completion of the first `TAKING FLIGHT` contract step
+
 ## Planned Commit Sequence
 
 ### 1. Plan And Feature Ledger
@@ -151,6 +158,19 @@ Success condition:
 
 - reach `bot_ready` and begin issuing headless actions through the hosted client
 
+### 6. Same-Session Browser Sequences
+
+Commit scope:
+
+- add a `browser-sequence` CLI action
+- allow `command`, `click`, `status`, `wait`, and `screenshot` steps
+- keep one hosted browser session alive across the full sequence
+
+Success condition:
+
+- live gameplay can progress across multiple dependent actions without
+  reconnecting between them
+
 ## Definition Of “As Far As Possible”
 
 For this repo, “as far as possible” means:
@@ -161,6 +181,7 @@ For this repo, “as far as possible” means:
 4. exchange real client messages
 5. retrieve live in-game state
 6. submit live in-game actions that the session path allows
+7. maintain session continuity long enough to complete multi-step objectives
 
 If a phase is blocked, the next commit should improve one of:
 
@@ -195,6 +216,7 @@ surface over direct edge-function gameplay calls.
 
 ## Immediate Next Step
 
-Wire the proven hosted-browser path into the CLI, then keep pushing live
-control actions like tutorial skip, contracts lookup, and navigation until the
-next real blocker is isolated.
+Use the same-session browser runner to push beyond the first travel objective:
+inspect the active contract, locate a mega-port in Federation Space, and keep
+adding only the next missing automation primitive when gameplay proves it is
+needed.
