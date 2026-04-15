@@ -11,6 +11,30 @@ The intent is not just to scaffold code, but to keep a running record of:
 - what is currently blocked,
 - and what fallback path to take when a transport or API path stalls.
 
+## Local Vs Live Constraint
+
+There are two different targets, and they should not be conflated:
+
+- live production gameplay
+- a fully local stack
+
+Current proven constraint:
+
+- running transport or bot code locally does not, by itself, unlock live gameplay
+- if the bot still talks to the live production Supabase edge functions, protected gameplay requires a trusted `X-API-Token`
+- the upstream bot path uses `AsyncGameClient` in Supabase mode, and that client expects a trusted gameplay token for protected calls
+
+Implication:
+
+- a plain local session-control API is useful, but only in one of these two cases:
+  - it is deployed on the live service we do not control
+  - or it is used against a fully local stack that we do control
+
+Fallback decision rule:
+
+- if trusted live gameplay credentials are available, keep pushing the live character
+- if they are not available, the clean path is to run a fully local stack and use the headless client against that stack instead of pretending local transport work alone will cross the live auth boundary
+
 ## Goal
 
 Reach the deepest playable headless path available from the public production
@@ -257,6 +281,19 @@ Current mitigation:
 - bridge-level `connectTimeoutMs`
 - bridge-level `requestTimeoutMs`
 - transport-ready fallback when `bot_ready` does not arrive
+
+### Local Server Scope Limit
+
+Observed architectural limit:
+
+- a local bot or session server still needs trusted gameplay credentials if it is pointed at the live production edge functions
+- therefore local server work does not automatically let the headless client advance a live character on the public site
+
+What local server work can still do:
+
+- remove browser and WebRTC complexity for local testing
+- provide a clean HTTP control plane for a fully local stack
+- serve as the right long-term interface if a deployable server path ever becomes available
 
 Current next diagnostic:
 

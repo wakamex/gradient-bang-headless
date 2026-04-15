@@ -93,6 +93,20 @@ Current expected variables include:
 - `GB_CHARACTER_ID`
 - `GB_ACTOR_CHARACTER_ID`
 
+## Local Vs Live Authority
+
+1. Do not assume a local bot or transport server can advance a live character by itself.
+2. If the client is pointed at the live production project, protected gameplay still requires a trusted gameplay token such as `GB_API_TOKEN`.
+3. A local session-control API only removes the WebRTC and browser dependency. It does not remove the live gameplay auth boundary.
+4. If trusted live gameplay credentials are unavailable, the fallback is a fully local stack:
+   - local edge functions
+   - local bot or session server
+   - local auth and database state
+5. Before investing in more local transport work, decide which mode applies:
+   - live production character with trusted token
+   - fully local stack under our control
+6. Record that choice in docs before adding new transport or server features so the repo stays honest about what a feature can actually unblock.
+
 ## Key Files
 
 - `upstream/client/app/src/stores/game.ts`
