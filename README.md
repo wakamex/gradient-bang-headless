@@ -44,9 +44,14 @@ npm install
 
 ## Environment
 
-Copy `.env.example` or export values directly:
+The CLI auto-loads a repo-root `.env` if present. Copy `.env.example` or export
+values directly:
 
 - `GB_FUNCTIONS_URL`: defaults to `https://api.gradient-bang.com/functions/v1`
+- `GB_SITE_URL`: defaults to `https://game.gradient-bang.com/`
+- `GB_EMAIL`: default login email for public/bootstrap flows
+- `GB_PASSWORD`: default login password for public/bootstrap flows
+- `GB_CHARACTER_NAME`: default character name for bootstrap and hosted-client flows
 - `GB_API_TOKEN`: trusted gameplay token for protected edge functions
 - `GB_ACCESS_TOKEN`: Supabase access token returned by `login`
 - `GB_CHARACTER_ID`: default player character for gameplay calls
@@ -55,16 +60,15 @@ Copy `.env.example` or export values directly:
 ## CLI
 
 ```bash
+gb-headless login
+gb-headless register
 gb-headless login --email you@example.com --password 'secret'
 gb-headless register --email you@example.com --password 'secret'
 gb-headless confirm-url --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
 gb-headless character-list --access-token "$GB_ACCESS_TOKEN"
-gb-headless character-create --name "My Pilot" --access-token "$GB_ACCESS_TOKEN"
-gb-headless start-session --character-id "$GB_CHARACTER_ID" --access-token "$GB_ACCESS_TOKEN"
+gb-headless character-create --access-token "$GB_ACCESS_TOKEN"
+gb-headless start-session --access-token "$GB_ACCESS_TOKEN"
 gb-headless signup-and-start \
-  --email you@example.com \
-  --password 'secret' \
-  --name 'My Pilot' \
   --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
 gb-headless session-connect --character-id "$GB_CHARACTER_ID" --access-token "$GB_ACCESS_TOKEN"
 gb-headless session-request \
@@ -80,34 +84,17 @@ gb-headless session-send-text \
   --access-token "$GB_ACCESS_TOKEN" \
   --content 'plot a safe course'
 gb-headless browser-connect \
-  --email you@example.com \
-  --password 'secret' \
-  --character-name 'My Pilot'
+  --headful
 gb-headless browser-click \
-  --email you@example.com \
-  --password 'secret' \
-  --character-name 'My Pilot' \
   --label 'Skip Tutorial'
 gb-headless browser-command \
-  --email you@example.com \
-  --password 'secret' \
-  --character-name 'My Pilot' \
   --text 'plot a safe course'
 gb-headless browser-sequence \
-  --email you@example.com \
-  --password 'secret' \
-  --character-name 'My Pilot' \
   --steps '[{"type":"command","text":"show my contracts panel"},{"type":"command","text":"find the nearest mega-port and take us there"}]'
 gb-headless browser-contract-loop \
-  --email you@example.com \
-  --password 'secret' \
-  --character-name 'My Pilot' \
   --iterations 3 \
   --wait-after-ms 60000
 gb-headless browser-command-watch \
-  --email you@example.com \
-  --password 'secret' \
-  --character-name 'My Pilot' \
   --text 'complete the next tutorial or contract step now if you can' \
   --watch-timeout-ms 300000 \
   --poll-interval-ms 15000
@@ -119,6 +106,8 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 ## Notes
 
 - `call` is a generic edge-function wrapper.
+- `.env` values are used automatically for login/browser defaults, so the
+  shortest commands can omit repeated credentials.
 - `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.
 - `game-call` auto-injects `character_id` and `actor_character_id` when configured.
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.

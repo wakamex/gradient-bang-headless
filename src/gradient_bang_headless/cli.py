@@ -47,13 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     login = sub.add_parser("login", help="Call the public login endpoint")
-    login.add_argument("--email", required=True)
-    login.add_argument("--password", required=True)
+    login.add_argument("--email")
+    login.add_argument("--password")
     _add_common_config_args(login)
 
     register = sub.add_parser("register", help="Create an account")
-    register.add_argument("--email", required=True)
-    register.add_argument("--password", required=True)
+    register.add_argument("--email")
+    register.add_argument("--password")
     _add_common_config_args(register)
 
     confirm_url = sub.add_parser(
@@ -68,12 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
     character_list.add_argument("--access-token")
 
     character_create = sub.add_parser("character-create", help="Create a character with a JWT")
-    character_create.add_argument("--name", required=True)
+    character_create.add_argument("--name")
     _add_common_config_args(character_create)
     character_create.add_argument("--access-token")
 
     start_session = sub.add_parser("start-session", help="Create a bot session via /start")
-    start_session.add_argument("--character-id", required=True)
+    start_session.add_argument("--character-id")
     start_session.add_argument("--access-token")
     _add_start_options(start_session)
     _add_common_config_args(start_session)
@@ -82,9 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
         "signup-and-start",
         help="Two-step bootstrap: register first, then rerun with --verify-url to finish",
     )
-    signup_and_start.add_argument("--email", required=True)
-    signup_and_start.add_argument("--password", required=True)
-    signup_and_start.add_argument("--name", required=True)
+    signup_and_start.add_argument("--email")
+    signup_and_start.add_argument("--password")
+    signup_and_start.add_argument("--name")
     signup_and_start.add_argument("--verify-url")
     signup_and_start.add_argument("--wait-timeout", type=float, default=10.0)
     signup_and_start.add_argument("--poll-interval", type=float, default=1.0)
@@ -246,10 +246,10 @@ def _add_session_connect_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_browser_connect_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--site-url", default="https://game.gradient-bang.com/")
-    parser.add_argument("--email", required=True)
-    parser.add_argument("--password", required=True)
-    parser.add_argument("--character-name", required=True)
+    parser.add_argument("--site-url")
+    parser.add_argument("--email")
+    parser.add_argument("--password")
+    parser.add_argument("--character-name")
     parser.add_argument("--headful", action="store_true")
     parser.add_argument("--connect-timeout-ms", type=int, default=120_000)
     parser.add_argument("--post-connect-wait-ms", type=int, default=0)
@@ -267,13 +267,19 @@ async def dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "login":
         async with HeadlessApiClient(config) as client:
-            result = await client.login(args.email, args.password)
+            result = await client.login(
+                _require_text(args.email, config.email, "email", env_name="GB_EMAIL"),
+                _require_text(args.password, config.password, "password", env_name="GB_PASSWORD"),
+            )
             print(dump_json(result))
             return 0
 
     if args.command == "register":
         async with HeadlessApiClient(config) as client:
-            result = await client.register(args.email, args.password)
+            result = await client.register(
+                _require_text(args.email, config.email, "email", env_name="GB_EMAIL"),
+                _require_text(args.password, config.password, "password", env_name="GB_PASSWORD"),
+            )
             print(dump_json(result))
             return 0
 
@@ -291,16 +297,24 @@ async def dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "character-create":
         async with HeadlessApiClient(config) as client:
-            result = await client.character_create(args.name, access_token=args.access_token)
+            result = await client.character_create(
+                _require_text(args.name, config.character_name, "name", env_name="GB_CHARACTER_NAME"),
+                access_token=args.access_token,
+            )
             print(dump_json(result))
             return 0
 
     if args.command == "start-session":
         async with HeadlessApiClient(config) as client:
             result = await client.start_session(
-                character_id=args.character_id,
+                character_id=_require_text(
+                    args.character_id,
+                    config.character_id,
+                    "character-id",
+                    env_name="GB_CHARACTER_ID",
+                ),
                 access_token=_require_access_token(args.access_token, config),
-                options=_start_options_from_args(args),
+                options=_start_options_from_args(args, config),
             )
             print(dump_json(result))
             return 0
@@ -308,11 +322,21 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "signup-and-start":
         async with HeadlessApiClient(config) as client:
             result = await client.signup_and_start(
-                email=args.email,
-                password=args.password,
-                character_name=args.name,
+                email=_require_text(args.email, config.email, "email", env_name="GB_EMAIL"),
+                password=_require_text(
+                    args.password,
+                    config.password,
+                    "password",
+                    env_name="GB_PASSWORD",
+                ),
+                character_name=_require_text(
+                    args.name,
+                    config.character_name,
+                    "name",
+                    env_name="GB_CHARACTER_NAME",
+                ),
                 verify_url=args.verify_url,
-                start_options=_start_options_from_args(args),
+                start_options=_start_options_from_args(args, config),
                 wait_timeout=args.wait_timeout,
                 poll_interval=args.poll_interval,
             )
@@ -394,7 +418,7 @@ async def dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "browser-connect":
         async with HostedGameBrowserProcess(config) as browser:
-            result = await browser.connect(_browser_connect_options_from_args(args))
+            result = await browser.connect(_browser_connect_options_from_args(args, config))
             print(
                 dump_json(
                     {
@@ -407,7 +431,7 @@ async def dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "browser-command":
         async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
             command_result = await browser.send_command(
                 args.text,
                 wait_after_ms=args.wait_after_ms,
@@ -428,7 +452,7 @@ async def dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "browser-sequence":
         async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
             steps = _parse_json_array(args.steps)
             results: list[dict[str, Any]] = []
             for index, step in enumerate(steps):
@@ -497,7 +521,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                 "--iterations must be >= 1",
             )
         async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
             iterations: list[dict[str, Any]] = []
             for iteration in range(args.iterations):
                 command_result = await browser.send_command(
@@ -538,7 +562,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                 "--poll-interval-ms must be >= 1",
             )
         async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
             command_result = await browser.send_command(
                 args.text,
                 wait_after_ms=args.wait_after_ms,
@@ -586,7 +610,7 @@ async def dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "browser-click":
         async with HostedGameBrowserProcess(config) as browser:
-            connect_result = await browser.connect(_browser_connect_options_from_args(args))
+            connect_result = await browser.connect(_browser_connect_options_from_args(args, config))
             click_result = await browser.click_button(
                 args.label,
                 wait_after_ms=args.wait_after_ms,
@@ -673,13 +697,13 @@ def config_from_args(args: argparse.Namespace) -> HeadlessConfig:
     return config
 
 
-def _start_options_from_args(args: argparse.Namespace) -> StartOptions:
+def _start_options_from_args(args: argparse.Namespace, config: HeadlessConfig) -> StartOptions:
     return StartOptions(
         transport=args.transport,
         bypass_tutorial=args.bypass_tutorial,
         voice_id=args.voice_id,
         personality_tone=args.personality_tone,
-        character_name=args.character_name,
+        character_name=getattr(args, "character_name", None) or config.character_name,
     )
 
 
@@ -709,12 +733,25 @@ def _session_connect_options_from_args(
     )
 
 
-def _browser_connect_options_from_args(args: argparse.Namespace) -> BrowserConnectOptions:
+def _browser_connect_options_from_args(
+    args: argparse.Namespace,
+    config: HeadlessConfig,
+) -> BrowserConnectOptions:
     return BrowserConnectOptions(
-        email=args.email,
-        password=args.password,
-        character_name=args.character_name,
-        site_url=args.site_url,
+        email=_require_text(args.email, config.email, "email", env_name="GB_EMAIL"),
+        password=_require_text(
+            args.password,
+            config.password,
+            "password",
+            env_name="GB_PASSWORD",
+        ),
+        character_name=_require_text(
+            args.character_name,
+            config.character_name,
+            "character-name",
+            env_name="GB_CHARACTER_NAME",
+        ),
+        site_url=(args.site_url or config.site_url).strip(),
         headless=not args.headful,
         connect_timeout_ms=args.connect_timeout_ms,
         post_connect_wait_ms=args.post_connect_wait_ms,
@@ -732,6 +769,23 @@ def _require_access_token(raw: str | None, config: HeadlessConfig) -> str:
     if not token:
         raise HeadlessApiError("cli", 0, "missing --access-token or GB_ACCESS_TOKEN")
     return token
+
+
+def _require_text(
+    raw: str | None,
+    fallback: str | None,
+    field_name: str,
+    *,
+    env_name: str,
+) -> str:
+    value = (raw or fallback or "").strip()
+    if not value:
+        raise HeadlessApiError(
+            "cli",
+            0,
+            f"missing --{field_name} or {env_name}",
+        )
+    return value
 
 
 def _require_browser_step_string(step: dict[str, Any], key: str) -> str:
