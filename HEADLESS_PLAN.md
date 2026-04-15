@@ -93,6 +93,11 @@ Newest proven gameplay capability:
 - completion of the first `TAKING FLIGHT` contract step
 - completion of the next tutorial steps through mega-port arrival, refuel, and commodity purchase
 
+Newest runner hardening:
+
+- hosted-browser connect now distinguishes initial shell paint from actual interactive readiness
+- command submission now targets the enabled command field instead of the first input on the page
+
 ## Planned Commit Sequence
 
 ### 1. Plan And Feature Ledger
@@ -184,6 +189,18 @@ Success condition:
 
 - tutorial or contract progression can be driven for several iterations without
   hand-writing a JSON sequence each time
+
+### 8. Interactive Shell Readiness
+
+Commit scope:
+
+- make hosted-browser connect wait for an enabled command field
+- avoid reporting success during `INITIALIZING GAME INSTANCES...`
+- make command submission target the actual enabled command field
+
+Success condition:
+
+- browser-driven command loops no longer race the hosted client boot sequence
 
 ## Definition Of “As Far As Possible”
 

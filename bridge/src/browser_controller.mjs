@@ -160,7 +160,10 @@ class HostedGameBrowser {
     const bodyTextLimit = numberOr(command.bodyTextLimit, 4000);
     const snapshot = await this.page.evaluate(
       ({ bodyTextLimit, logs }) => {
-        const input = document.querySelector('input[placeholder="Enter Command"]');
+        const input = Array.from(document.querySelectorAll("input,textarea")).find((field) => {
+          const placeholder = (field.placeholder || "").toLowerCase();
+          return placeholder.includes("enter command");
+        });
         return {
           url: window.location.href,
           title: document.title,
@@ -205,22 +208,14 @@ class HostedGameBrowser {
     const waitForEnabled = booleanOr(command.waitForInputEnabled, true);
 
     if (waitForEnabled) {
-      await this.page.waitForFunction(
-        () => {
-          const fields = Array.from(document.querySelectorAll("input,textarea"));
-          return fields.some((field) => {
-            const placeholder = (field.placeholder || "").toLowerCase();
-            return (
-              (placeholder.includes("enter command") || fields.length === 1) &&
-              field.disabled === false
-            );
-          });
-        },
-        { timeout: inputTimeoutMs },
-      );
+      await this._waitForEnabledCommandInput(inputTimeoutMs);
     }
 
-    const input = this.page.locator("input, textarea").first();
+    const input = this.page
+      .locator(
+        'input[placeholder*="enter command" i]:not([disabled]), textarea[placeholder*="enter command" i]:not([disabled])',
+      )
+      .first();
     await input.fill(text);
     await input.press("Enter");
 
@@ -344,27 +339,34 @@ class HostedGameBrowser {
   }
 
   async _waitForGameShell(timeoutMs) {
-    await Promise.race([
-      this.page.waitForSelector('input[placeholder="Enter Command"]', {
-        timeout: timeoutMs,
-      }),
-      this.page.waitForSelector('input[placeholder="ENTER COMMAND"]', {
-        timeout: timeoutMs,
-      }),
-      this.page
-        .getByRole("button", { name: /^ships$/i })
-        .waitFor({ state: "visible", timeout: timeoutMs }),
-      this.page
-        .getByRole("button", { name: /^skip tutorial$/i })
-        .waitFor({ state: "visible", timeout: timeoutMs }),
-      this.page.waitForFunction(
-        () => {
-          const text = document.body.innerText;
-          return text.includes("BANK") && text.includes("ON HAND");
-        },
-        { timeout: timeoutMs },
-      ),
-    ]);
+    await this.page.waitForFunction(
+      () => {
+        const text = document.body.innerText;
+        if (
+          text.includes("INITIALIZING GAME INSTANCES") ||
+          text.includes("AWAITING MAP DATA") ||
+          text.includes("AWAITING SHIP DATA")
+        ) {
+          return false;
+        }
+        return Array.from(document.querySelectorAll("input,textarea")).some((field) => {
+          const placeholder = (field.placeholder || "").toLowerCase();
+          return placeholder.includes("enter command") && field.disabled === false;
+        });
+      },
+      { timeout: timeoutMs },
+    );
+  }
+
+  async _waitForEnabledCommandInput(timeoutMs) {
+    await this.page.waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("input,textarea")).some((field) => {
+          const placeholder = (field.placeholder || "").toLowerCase();
+          return placeholder.includes("enter command") && field.disabled === false;
+        }),
+      { timeout: timeoutMs },
+    );
   }
 }
 

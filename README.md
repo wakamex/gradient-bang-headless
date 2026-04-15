@@ -20,6 +20,7 @@ This scaffold supports:
 - a hosted-browser runner for the live `game.gradient-bang.com` client
 - a same-session browser sequence runner for multi-step gameplay automation
 - a contract loop runner that repeats tutorial/contract advancement prompts
+- a stricter hosted-browser readiness check that waits for an interactive command shell
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
 ## Important Constraint
@@ -117,6 +118,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `browser-connect`, `browser-click`, and `browser-command` drive the live hosted client in headless Chromium.
 - `browser-sequence` keeps one hosted browser session alive across multiple steps, which is required for reliable movement and contract progression.
 - `browser-contract-loop` repeatedly submits the proven progression prompt inside one hosted session and records a status snapshot after each iteration.
+- hosted-browser connect now waits for an enabled command field instead of returning during `INITIALIZING GAME INSTANCES...`.
 - the hosted client currently defaults to Daily transport in production and is the deepest proven public gameplay path so far.
 - `browser-command` has been proven live for in-game text submission after the hosted client reaches control.
 - `browser-sequence` has been proven live for same-session travel and the first tutorial contract step.
