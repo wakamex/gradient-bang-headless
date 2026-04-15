@@ -7,7 +7,13 @@ import sys
 from typing import Any
 
 from .config import HeadlessConfig
-from .http import EventScope, HeadlessApiClient, HeadlessApiError, dump_json
+from .http import (
+    EventScope,
+    HeadlessApiClient,
+    HeadlessApiError,
+    StartOptions,
+    dump_json,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,6 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
     login.add_argument("--password", required=True)
     _add_common_config_args(login)
 
+    register = sub.add_parser("register", help="Create an account")
+    register.add_argument("--email", required=True)
+    register.add_argument("--password", required=True)
+    _add_common_config_args(register)
+
+    confirm_url = sub.add_parser(
+        "confirm-url",
+        help="Resolve an email verification URL and extract session tokens",
+    )
+    confirm_url.add_argument("--verify-url", required=True)
+    _add_common_config_args(confirm_url)
+
     character_list = sub.add_parser("character-list", help="List characters for a JWT")
     _add_common_config_args(character_list)
     character_list.add_argument("--access-token")
@@ -44,6 +62,25 @@ def build_parser() -> argparse.ArgumentParser:
     character_create.add_argument("--name", required=True)
     _add_common_config_args(character_create)
     character_create.add_argument("--access-token")
+
+    start_session = sub.add_parser("start-session", help="Create a bot session via /start")
+    start_session.add_argument("--character-id", required=True)
+    start_session.add_argument("--access-token")
+    _add_start_options(start_session)
+    _add_common_config_args(start_session)
+
+    signup_and_start = sub.add_parser(
+        "signup-and-start",
+        help="Two-step bootstrap: register first, then rerun with --verify-url to finish",
+    )
+    signup_and_start.add_argument("--email", required=True)
+    signup_and_start.add_argument("--password", required=True)
+    signup_and_start.add_argument("--name", required=True)
+    signup_and_start.add_argument("--verify-url")
+    signup_and_start.add_argument("--wait-timeout", type=float, default=10.0)
+    signup_and_start.add_argument("--poll-interval", type=float, default=1.0)
+    _add_start_options(signup_and_start)
+    _add_common_config_args(signup_and_start)
 
     call = sub.add_parser("call", help="Generic edge-function call")
     call.add_argument("endpoint")
@@ -85,12 +122,32 @@ def _add_common_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--functions-url")
 
 
+def _add_start_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--transport", choices=["daily", "smallwebrtc"], default="daily")
+    parser.add_argument("--bypass-tutorial", action="store_true")
+    parser.add_argument("--voice-id")
+    parser.add_argument("--personality-tone")
+    parser.add_argument("--character-name")
+
+
 async def dispatch(args: argparse.Namespace) -> int:
     config = config_from_args(args)
 
     if args.command == "login":
         async with HeadlessApiClient(config) as client:
             result = await client.login(args.email, args.password)
+            print(dump_json(result))
+            return 0
+
+    if args.command == "register":
+        async with HeadlessApiClient(config) as client:
+            result = await client.register(args.email, args.password)
+            print(dump_json(result))
+            return 0
+
+    if args.command == "confirm-url":
+        async with HeadlessApiClient(config) as client:
+            result = await client.confirm_url(args.verify_url)
             print(dump_json(result))
             return 0
 
@@ -103,6 +160,30 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "character-create":
         async with HeadlessApiClient(config) as client:
             result = await client.character_create(args.name, access_token=args.access_token)
+            print(dump_json(result))
+            return 0
+
+    if args.command == "start-session":
+        async with HeadlessApiClient(config) as client:
+            result = await client.start_session(
+                character_id=args.character_id,
+                access_token=_require_access_token(args.access_token, config),
+                options=_start_options_from_args(args),
+            )
+            print(dump_json(result))
+            return 0
+
+    if args.command == "signup-and-start":
+        async with HeadlessApiClient(config) as client:
+            result = await client.signup_and_start(
+                email=args.email,
+                password=args.password,
+                character_name=args.name,
+                verify_url=args.verify_url,
+                start_options=_start_options_from_args(args),
+                wait_timeout=args.wait_timeout,
+                poll_interval=args.poll_interval,
+            )
             print(dump_json(result))
             return 0
 
@@ -172,6 +253,23 @@ def config_from_args(args: argparse.Namespace) -> HeadlessConfig:
     if getattr(args, "functions_url", None):
         config.functions_url = args.functions_url.rstrip("/")
     return config
+
+
+def _start_options_from_args(args: argparse.Namespace) -> StartOptions:
+    return StartOptions(
+        transport=args.transport,
+        bypass_tutorial=args.bypass_tutorial,
+        voice_id=args.voice_id,
+        personality_tone=args.personality_tone,
+        character_name=args.character_name,
+    )
+
+
+def _require_access_token(raw: str | None, config: HeadlessConfig) -> str:
+    token = raw or config.access_token
+    if not token:
+        raise HeadlessApiError("cli", 0, "missing --access-token or GB_ACCESS_TOKEN")
+    return token
 
 
 def _parse_json_object(raw: str) -> dict[str, Any]:

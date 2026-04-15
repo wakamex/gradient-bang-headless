@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
 
@@ -34,6 +36,15 @@ class EventScope:
     character_ids: list[str]
     ship_ids: list[str]
     corp_id: str | None = None
+
+
+@dataclass(slots=True)
+class StartOptions:
+    transport: str = "daily"
+    bypass_tutorial: bool = False
+    voice_id: str | None = None
+    personality_tone: str | None = None
+    character_name: str | None = None
 
 
 class HeadlessApiClient:
@@ -122,6 +133,64 @@ class HeadlessApiClient:
     async def login(self, email: str, password: str) -> Any:
         return await self.request("login", payload={"email": email, "password": password})
 
+    async def register(self, email: str, password: str) -> Any:
+        return await self.request("register", payload={"email": email, "password": password})
+
+    async def confirm_url(self, verify_url: str, *, max_hops: int = 5) -> Any:
+        current_url = html.unescape(verify_url.strip())
+        if not current_url:
+            raise HeadlessApiError("confirm_url", 0, "verify URL is required")
+
+        for _ in range(max_hops):
+            response = await self._http.get(current_url, follow_redirects=False)
+            location = response.headers.get("location")
+
+            if location:
+                resolved = urljoin(str(response.request.url), location)
+                parsed = urlsplit(resolved)
+                fragment = _flatten_fragment(parsed.fragment)
+                if fragment:
+                    error = fragment.get("error")
+                    if isinstance(error, str) and error:
+                        message = str(fragment.get("error_description") or error)
+                        raise HeadlessApiError(
+                            "confirm_url",
+                            response.status_code,
+                            message,
+                            payload={"redirect_location": resolved, "fragment": fragment},
+                        )
+
+                    session = {
+                        "access_token": fragment.get("access_token"),
+                        "refresh_token": fragment.get("refresh_token"),
+                        "expires_at": _coerce_status(fragment.get("expires_at")),
+                        "expires_in": _coerce_status(fragment.get("expires_in")),
+                        "token_type": fragment.get("token_type"),
+                        "type": fragment.get("type"),
+                    }
+                    return {
+                        "success": True,
+                        "redirect_location": resolved,
+                        "fragment": fragment,
+                        "session": session,
+                    }
+
+                current_url = resolved
+                continue
+
+            if response.is_error:
+                data = _safe_json(response)
+                message = _extract_error_message(data) or response.text or "confirmation failed"
+                raise HeadlessApiError("confirm_url", response.status_code, message, payload=data)
+
+            break
+
+        raise HeadlessApiError(
+            "confirm_url",
+            0,
+            "confirmation flow did not return a session-bearing redirect",
+        )
+
     async def character_list(self, *, access_token: str | None = None) -> Any:
         return await self.request(
             "user_character_list",
@@ -139,6 +208,162 @@ class HeadlessApiClient:
             payload={"name": name},
             access_token=access_token,
         )
+
+    async def wait_for_character(
+        self,
+        *,
+        access_token: str,
+        character_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 10.0,
+        poll_interval: float = 1.0,
+    ) -> Any:
+        deadline = asyncio.get_running_loop().time() + timeout
+        last_result: Any = None
+
+        while True:
+            last_result = await self.character_list(access_token=access_token)
+            characters = last_result.get("characters") if isinstance(last_result, Mapping) else None
+            if isinstance(characters, list):
+                for character in characters:
+                    if not isinstance(character, Mapping):
+                        continue
+                    if character_id and character.get("character_id") == character_id:
+                        return character
+                    if name and character.get("name") == name:
+                        return character
+
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+            await asyncio.sleep(poll_interval)
+
+        raise HeadlessApiError(
+            "wait_for_character",
+            0,
+            "character did not appear in user_character_list before timeout",
+            payload=last_result,
+        )
+
+    async def start_session(
+        self,
+        *,
+        character_id: str,
+        access_token: str,
+        options: StartOptions | None = None,
+    ) -> Any:
+        opts = options or StartOptions()
+        body: dict[str, Any] = {
+            "character_id": character_id,
+            "bypass_tutorial": opts.bypass_tutorial,
+        }
+        if opts.voice_id:
+            body["voice_id"] = opts.voice_id
+        if opts.personality_tone:
+            body["personality_tone"] = opts.personality_tone
+        if opts.character_name:
+            body["character_name"] = opts.character_name
+
+        payload: dict[str, Any]
+        if opts.transport == "daily":
+            payload = {
+                "createDailyRoom": True,
+                "dailyRoomProperties": {
+                    "start_video_off": True,
+                    "eject_at_room_exp": True,
+                },
+                "body": body,
+            }
+        elif opts.transport == "smallwebrtc":
+            payload = {
+                "createDailyRoom": False,
+                "enableDefaultIceServers": True,
+                "body": body,
+            }
+        else:
+            raise HeadlessApiError("start_session", 0, f"unsupported transport {opts.transport!r}")
+
+        return await self.request("start", payload=payload, access_token=access_token)
+
+    async def signup_and_start(
+        self,
+        *,
+        email: str,
+        password: str,
+        character_name: str,
+        verify_url: str | None = None,
+        start_options: StartOptions | None = None,
+        wait_timeout: float = 10.0,
+        poll_interval: float = 1.0,
+    ) -> Any:
+        confirm_result = None
+        register_result = None
+
+        if verify_url:
+            confirm_result = await self.confirm_url(verify_url)
+        else:
+            register_result = await self.register(email, password)
+            if not register_result.get("email_confirmed"):
+                raise HeadlessApiError(
+                    "signup_and_start",
+                    0,
+                    "registration succeeded but email confirmation is required; rerun with the email link via --verify-url or confirm externally first",
+                    payload=register_result,
+                )
+
+        login_result = await self.login(email, password)
+        session = login_result.get("session") if isinstance(login_result, Mapping) else None
+        access_token = session.get("access_token") if isinstance(session, Mapping) else None
+        if not isinstance(access_token, str) or not access_token:
+            raise HeadlessApiError(
+                "signup_and_start",
+                0,
+                "login did not return an access token",
+                payload=login_result,
+            )
+
+        create_result = await self.character_create(character_name, access_token=access_token)
+        character_id = create_result.get("character_id") if isinstance(create_result, Mapping) else None
+        if not isinstance(character_id, str) or not character_id:
+            raise HeadlessApiError(
+                "signup_and_start",
+                0,
+                "character_create did not return character_id",
+                payload=create_result,
+            )
+
+        visible_character = await self.wait_for_character(
+            access_token=access_token,
+            character_id=character_id,
+            name=character_name,
+            timeout=wait_timeout,
+            poll_interval=poll_interval,
+        )
+
+        effective_options = start_options or StartOptions()
+        if not effective_options.character_name:
+            effective_options = StartOptions(
+                transport=effective_options.transport,
+                bypass_tutorial=effective_options.bypass_tutorial,
+                voice_id=effective_options.voice_id,
+                personality_tone=effective_options.personality_tone,
+                character_name=str(visible_character.get("name") or character_name),
+            )
+
+        start_result = await self.start_session(
+            character_id=character_id,
+            access_token=access_token,
+            options=effective_options,
+        )
+
+        return {
+            "success": True,
+            "register": register_result,
+            "confirm": confirm_result,
+            "login": login_result,
+            "character_create": create_result,
+            "character": visible_character,
+            "start": start_result,
+        }
 
     async def call_gameplay(
         self,
@@ -268,6 +493,28 @@ def _coerce_status(value: Any) -> int | None:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+def _flatten_fragment(fragment: str) -> dict[str, Any]:
+    if not fragment:
+        return {}
+    parsed = parse_qs(fragment, keep_blank_values=True)
+    result: dict[str, Any] = {}
+    for key, values in parsed.items():
+        if not values:
+            result[key] = ""
+        elif len(values) == 1:
+            result[key] = values[0]
+        else:
+            result[key] = values
+    return result
+
+
+def _safe_json(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        return {"text": response.text}
 
 
 def dump_json(data: Any) -> str:

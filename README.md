@@ -11,7 +11,7 @@ This repo is the home for a headless client and automation tooling for Gradient 
 
 This scaffold supports:
 
-- public control-plane calls like `login` and `user_character_create`
+- public control-plane calls like `register`, `login`, `user_character_create`, and `start`
 - generic edge-function calls against `https://api.gradient-bang.com/functions/v1`
 - `events_since` polling for request/event correlation
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
@@ -44,8 +44,16 @@ Copy `.env.example` or export values directly:
 
 ```bash
 gb-headless login --email you@example.com --password 'secret'
+gb-headless register --email you@example.com --password 'secret'
+gb-headless confirm-url --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
 gb-headless character-list --access-token "$GB_ACCESS_TOKEN"
 gb-headless character-create --name "My Pilot" --access-token "$GB_ACCESS_TOKEN"
+gb-headless start-session --character-id "$GB_CHARACTER_ID" --access-token "$GB_ACCESS_TOKEN"
+gb-headless signup-and-start \
+  --email you@example.com \
+  --password 'secret' \
+  --name 'My Pilot' \
+  --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
 gb-headless call leaderboard_resources --method GET
 gb-headless game-call my_status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN" --follow
@@ -54,5 +62,10 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 ## Notes
 
 - `call` is a generic edge-function wrapper.
+- `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.
 - `game-call` auto-injects `character_id` and `actor_character_id` when configured.
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.
+- `signup-and-start` is the proven public bootstrap flow:
+  `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
+- `signup-and-start` is a practical two-pass CLI flow:
+  first run without `--verify-url` to register, then rerun with the email link to finish.
