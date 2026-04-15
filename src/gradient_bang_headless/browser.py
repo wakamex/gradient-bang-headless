@@ -40,6 +40,10 @@ class BrowserConnectOptions:
     post_connect_wait_ms: int = 0
     body_text_limit: int = 4_000
     log_console: bool = False
+    log_network: bool = False
+    log_transport: bool = False
+    traffic_limit: int = 200
+    traffic_body_limit: int = 2_000
 
     def as_command(self) -> dict[str, Any]:
         return {
@@ -52,6 +56,10 @@ class BrowserConnectOptions:
             "postConnectWaitMs": self.post_connect_wait_ms,
             "bodyTextLimit": self.body_text_limit,
             "logConsole": self.log_console,
+            "logNetwork": self.log_network,
+            "logTransport": self.log_transport,
+            "trafficLimit": self.traffic_limit,
+            "trafficBodyLimit": self.traffic_body_limit,
         }
 
 

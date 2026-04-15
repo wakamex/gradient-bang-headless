@@ -255,6 +255,10 @@ def _add_browser_connect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--post-connect-wait-ms", type=int, default=0)
     parser.add_argument("--body-text-limit", type=int, default=4_000)
     parser.add_argument("--log-console", action="store_true")
+    parser.add_argument("--log-network", action="store_true")
+    parser.add_argument("--log-transport", action="store_true")
+    parser.add_argument("--traffic-limit", type=int, default=200)
+    parser.add_argument("--traffic-body-limit", type=int, default=2_000)
     _add_common_config_args(parser)
 
 
@@ -716,6 +720,10 @@ def _browser_connect_options_from_args(args: argparse.Namespace) -> BrowserConne
         post_connect_wait_ms=args.post_connect_wait_ms,
         body_text_limit=args.body_text_limit,
         log_console=args.log_console,
+        log_network=args.log_network,
+        log_transport=args.log_transport,
+        traffic_limit=args.traffic_limit,
+        traffic_body_limit=args.traffic_body_limit,
     )
 
 

@@ -22,6 +22,14 @@ Supported commands:
 
 const DEFAULT_SITE_URL = "https://game.gradient-bang.com/";
 const DEFAULT_VIEWPORT = { width: 1440, height: 1200 };
+const DEFAULT_TRAFFIC_LIMIT = 200;
+const DEFAULT_TRAFFIC_BODY_LIMIT = 2000;
+const DEFAULT_NETWORK_FILTERS = [
+  "api.gradient-bang.com",
+  "/functions/v1/",
+  "/start/",
+  "/auth/v1/",
+];
 
 function requireString(value, name) {
   if (typeof value !== "string" || value.trim() === "") {
@@ -64,6 +72,27 @@ function serialize(value) {
   );
 }
 
+function truncateText(value, limit) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  if (value.length <= limit) {
+    return value;
+  }
+  return `${value.slice(0, limit)}...`;
+}
+
+function stringArrayOr(value, fallback) {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+  const items = value
+    .filter((item) => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : fallback;
+}
+
 function serializeError(error) {
   if (error instanceof Error) {
     return serialize({
@@ -93,7 +122,13 @@ class HostedGameBrowser {
     this.context = null;
     this.page = null;
     this.logConsole = false;
+    this.logNetwork = false;
+    this.logTransport = false;
     this.recentLogs = [];
+    this.recentTraffic = [];
+    this.trafficLimit = DEFAULT_TRAFFIC_LIMIT;
+    this.trafficBodyLimit = DEFAULT_TRAFFIC_BODY_LIMIT;
+    this.networkFilters = DEFAULT_NETWORK_FILTERS;
   }
 
   async close() {
@@ -117,6 +152,7 @@ class HostedGameBrowser {
     this.context = null;
     this.browser = null;
     this.recentLogs = [];
+    this.recentTraffic = [];
   }
 
   async connect(command) {
@@ -129,6 +165,11 @@ class HostedGameBrowser {
     const postConnectWaitMs = numberOr(command.postConnectWaitMs, 0);
 
     this.logConsole = booleanOr(command.logConsole, false);
+    this.logNetwork = booleanOr(command.logNetwork, false);
+    this.logTransport = booleanOr(command.logTransport, false);
+    this.trafficLimit = numberOr(command.trafficLimit, DEFAULT_TRAFFIC_LIMIT);
+    this.trafficBodyLimit = numberOr(command.trafficBodyLimit, DEFAULT_TRAFFIC_BODY_LIMIT);
+    this.networkFilters = stringArrayOr(command.networkFilters, DEFAULT_NETWORK_FILTERS);
     this.browser = await chromium.launch({
       headless: booleanOr(command.headless, true),
       args: ["--use-gl=swiftshader"],
@@ -140,6 +181,73 @@ class HostedGameBrowser {
       },
       permissions: ["camera", "microphone"],
     });
+    if (this.logTransport) {
+      await this.context.exposeBinding("__gbHeadlessEmitTraffic", async (_source, payload) => {
+        this._recordTraffic(payload);
+      });
+      await this.context.addInitScript(
+        ({ trafficBodyLimit }) => {
+          const MARK = "__gbHeadlessWrapped";
+          const preview = (value) => {
+            if (typeof value === "string") {
+              return value.length <= trafficBodyLimit ?
+                  value
+                : `${value.slice(0, trafficBodyLimit)}...`;
+            }
+            if (value instanceof ArrayBuffer) {
+              return `[ArrayBuffer ${value.byteLength}]`;
+            }
+            if (ArrayBuffer.isView(value)) {
+              return `[${value.constructor.name} ${value.byteLength}]`;
+            }
+            try {
+              const rendered = String(value);
+              return rendered.length <= trafficBodyLimit ?
+                  rendered
+                : `${rendered.slice(0, trafficBodyLimit)}...`;
+            } catch {
+              return "[unserializable]";
+            }
+          };
+          const emit = (event) => {
+            try {
+              window.__gbHeadlessEmitTraffic(event);
+            } catch {}
+          };
+          if (
+            typeof window.RTCDataChannel === "function" &&
+            !window.RTCDataChannel.prototype.send?.[MARK]
+          ) {
+            const originalSend = window.RTCDataChannel.prototype.send;
+            const wrappedSend = function wrappedSend(data) {
+              emit({
+                kind: "rtc_datachannel_send",
+                label: this.label || null,
+                readyState: this.readyState || null,
+                dataPreview: preview(data),
+              });
+              return originalSend.apply(this, arguments);
+            };
+            wrappedSend[MARK] = true;
+            window.RTCDataChannel.prototype.send = wrappedSend;
+          }
+          if (typeof window.WebSocket === "function" && !window.WebSocket.prototype.send?.[MARK]) {
+            const originalSend = window.WebSocket.prototype.send;
+            const wrappedSend = function wrappedSend(data) {
+              emit({
+                kind: "websocket_send",
+                url: this.url || null,
+                dataPreview: preview(data),
+              });
+              return originalSend.apply(this, arguments);
+            };
+            wrappedSend[MARK] = true;
+            window.WebSocket.prototype.send = wrappedSend;
+          }
+        },
+        { trafficBodyLimit: this.trafficBodyLimit },
+      );
+    }
     this.page = await this.context.newPage();
     this._installPageListeners(this.page);
 
@@ -163,7 +271,7 @@ class HostedGameBrowser {
     this._ensurePage();
     const bodyTextLimit = numberOr(command.bodyTextLimit, 4000);
     const snapshot = await this.page.evaluate(
-      ({ bodyTextLimit, logs }) => {
+      ({ bodyTextLimit, logs, traffic }) => {
         const input = Array.from(document.querySelectorAll("input,textarea")).find((field) => {
           const placeholder = (field.placeholder || "").toLowerCase();
           return placeholder.includes("enter command");
@@ -172,11 +280,30 @@ class HostedGameBrowser {
           url: window.location.href,
           title: document.title,
           headings: Array.from(document.querySelectorAll("h1,h2,h3"))
-            .map((node) => node.textContent?.trim())
+            .map((node) => (node.innerText || node.textContent || "").trim())
             .filter(Boolean),
           buttons: Array.from(document.querySelectorAll("button"))
-            .map((node) => node.textContent?.trim())
+            .map((node) => (node.innerText || node.textContent || "").trim())
             .filter(Boolean),
+          clickTargets: Array.from(document.querySelectorAll("button, [role], [tabindex]"))
+            .filter((node) => {
+              const role = node.getAttribute("role");
+              return (
+                node.tagName === "BUTTON" ||
+                ["button", "link", "menuitem", "option", "tab"].includes(
+                  (role || "").toLowerCase(),
+                ) ||
+                (node.hasAttribute("tabindex") && typeof node.onclick === "function")
+              );
+            })
+            .map((node) => ({
+              tag: node.tagName,
+              role: node.getAttribute("role"),
+              text: (node.innerText || node.textContent || "").trim().replace(/\s+/g, " "),
+              ariaLabel: node.getAttribute("aria-label") || "",
+              title: node.getAttribute("title") || "",
+            }))
+            .filter((node) => node.text || node.ariaLabel || node.title),
           inputs: Array.from(document.querySelectorAll("input,textarea")).map((node) => ({
             tag: node.tagName,
             type: "type" in node ? node.type : null,
@@ -194,11 +321,13 @@ class HostedGameBrowser {
             : null,
           bodyText: document.body.innerText.slice(0, bodyTextLimit),
           recentLogs: logs,
+          recentTraffic: traffic,
         };
       },
       {
         bodyTextLimit,
         logs: this.recentLogs.slice(-20),
+        traffic: this.recentTraffic.slice(-50),
       },
     );
     return snapshot;
@@ -248,20 +377,55 @@ class HostedGameBrowser {
     } catch {
       await this.page.waitForFunction(
         (expected) =>
-          Array.from(document.querySelectorAll("button")).some(
-            (node) => node.textContent?.trim().replace(/\s+/g, " ").toLowerCase() === expected,
-          ),
+          Array.from(document.querySelectorAll("button, [role], [tabindex]"))
+            .filter((node) => {
+              const role = node.getAttribute("role");
+              return (
+                node.tagName === "BUTTON" ||
+                ["button", "link", "menuitem", "option", "tab"].includes(
+                  (role || "").toLowerCase(),
+                ) ||
+                (node.hasAttribute("tabindex") && typeof node.onclick === "function")
+              );
+            })
+            .some((node) => {
+              const text =
+                (node.innerText || node.textContent || "").trim().replace(/\s+/g, " ").toLowerCase();
+              const aria = node.getAttribute("aria-label")?.trim().replace(/\s+/g, " ").toLowerCase() || "";
+              const title = node.getAttribute("title")?.trim().replace(/\s+/g, " ").toLowerCase() || "";
+              return text === expected || aria === expected || title === expected;
+            }),
         normalizedLabel,
         { timeout: numberOr(command.timeoutMs, 120000) },
       );
       await this.page.evaluate((expected) => {
-        const button = Array.from(document.querySelectorAll("button")).find(
-          (node) => node.textContent?.trim().replace(/\s+/g, " ").toLowerCase() === expected,
+        const button = Array.from(document.querySelectorAll("button, [role], [tabindex]")).find(
+          (node) => {
+            const role = node.getAttribute("role");
+            if (
+              node.tagName !== "BUTTON" &&
+              !["button", "link", "menuitem", "option", "tab"].includes(
+                (role || "").toLowerCase(),
+              ) &&
+              !(node.hasAttribute("tabindex") && typeof node.onclick === "function")
+            ) {
+              return false;
+            }
+            const text =
+              (node.innerText || node.textContent || "").trim().replace(/\s+/g, " ").toLowerCase();
+            const aria = node.getAttribute("aria-label")?.trim().replace(/\s+/g, " ").toLowerCase() || "";
+            const title = node.getAttribute("title")?.trim().replace(/\s+/g, " ").toLowerCase() || "";
+            return text === expected || aria === expected || title === expected;
+          },
         );
         if (!button) {
           throw new Error(`button not found by text: ${expected}`);
         }
-        button.click();
+        if (typeof button.click === "function") {
+          button.click();
+          return;
+        }
+        button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       }, normalizedLabel);
     }
 
@@ -269,7 +433,10 @@ class HostedGameBrowser {
       await this.page.waitForTimeout(waitAfterMs);
     }
 
-    emitEvent("button_clicked", { label });
+    emitEvent("button_clicked", {
+      label,
+      timestamp: new Date().toISOString(),
+    });
     return await this.status({ bodyTextLimit: command.bodyTextLimit });
   }
 
@@ -302,6 +469,83 @@ class HostedGameBrowser {
         this._recordLog(`console:${message.type()}`, text);
       }
     });
+    page.on("request", (request) => {
+      if (!this.logNetwork || !this._shouldCaptureUrl(request.url())) {
+        return;
+      }
+      this._recordTraffic({
+        kind: "http_request",
+        method: request.method(),
+        resourceType: request.resourceType(),
+        url: request.url(),
+        postData: truncateText(request.postData(), this.trafficBodyLimit),
+      });
+    });
+    page.on("requestfailed", (request) => {
+      if (!this.logNetwork || !this._shouldCaptureUrl(request.url())) {
+        return;
+      }
+      this._recordTraffic({
+        kind: "http_request_failed",
+        method: request.method(),
+        resourceType: request.resourceType(),
+        url: request.url(),
+        failure: request.failure()?.errorText || null,
+      });
+    });
+    page.on("response", async (response) => {
+      if (!this.logNetwork || !this._shouldCaptureUrl(response.url())) {
+        return;
+      }
+      const headers = response.headers();
+      const contentType = headers["content-type"] || headers["Content-Type"] || null;
+      let bodyPreview = null;
+      if (this._isTextLikeResponse(contentType, response.request().resourceType())) {
+        try {
+          bodyPreview = truncateText(await response.text(), this.trafficBodyLimit);
+        } catch {
+          bodyPreview = null;
+        }
+      }
+      this._recordTraffic({
+        kind: "http_response",
+        method: response.request().method(),
+        resourceType: response.request().resourceType(),
+        status: response.status(),
+        url: response.url(),
+        contentType,
+        bodyPreview,
+      });
+    });
+    page.on("websocket", (websocket) => {
+      if (!this.logNetwork || !this._shouldCaptureUrl(websocket.url())) {
+        return;
+      }
+      this._recordTraffic({
+        kind: "websocket_open",
+        url: websocket.url(),
+      });
+      websocket.on("framesent", ({ payload }) => {
+        this._recordTraffic({
+          kind: "websocket_frame_sent",
+          url: websocket.url(),
+          payloadPreview: truncateText(payload, this.trafficBodyLimit),
+        });
+      });
+      websocket.on("framereceived", ({ payload }) => {
+        this._recordTraffic({
+          kind: "websocket_frame_received",
+          url: websocket.url(),
+          payloadPreview: truncateText(payload, this.trafficBodyLimit),
+        });
+      });
+      websocket.on("close", () => {
+        this._recordTraffic({
+          kind: "websocket_close",
+          url: websocket.url(),
+        });
+      });
+    });
   }
 
   _shouldLogConsole(text) {
@@ -318,6 +562,7 @@ class HostedGameBrowser {
 
   _recordLog(level, message) {
     const item = {
+      timestamp: new Date().toISOString(),
       level,
       message,
     };
@@ -326,6 +571,36 @@ class HostedGameBrowser {
       this.recentLogs.shift();
     }
     emitEvent("page_log", item);
+  }
+
+  _recordTraffic(payload) {
+    const item = {
+      timestamp: new Date().toISOString(),
+      ...serialize(payload),
+    };
+    this.recentTraffic.push(item);
+    if (this.recentTraffic.length > this.trafficLimit) {
+      this.recentTraffic.shift();
+    }
+    emitEvent("traffic", item);
+  }
+
+  _isTextLikeResponse(contentType, resourceType) {
+    if (resourceType === "fetch" || resourceType === "xhr") {
+      return true;
+    }
+    if (!contentType) {
+      return false;
+    }
+    return (
+      contentType.includes("application/json") ||
+      contentType.startsWith("text/") ||
+      contentType.includes("application/problem+json")
+    );
+  }
+
+  _shouldCaptureUrl(url) {
+    return this.networkFilters.some((pattern) => url.includes(pattern));
   }
 
   async _signIn(command, timeoutMs) {
