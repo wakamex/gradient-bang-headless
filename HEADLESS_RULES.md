@@ -1,6 +1,6 @@
 # Headless Rules
 
-These rules exist to keep the headless client biased toward stable backend paths and away from brittle browser automation.
+These rules exist to keep the headless client biased toward stable backend paths and away from brittle browser automation, while staying scoped to what a regular website player can actually do.
 
 ## Core Rules
 
@@ -16,6 +16,13 @@ These rules exist to keep the headless client biased toward stable backend paths
 7. Do not assume a visible button means there is a dedicated HTTP endpoint for that button.
 8. Confirm uncertain mappings with live traces only after reading the code path.
 9. When a mapping is proven, write it down in docs or code comments so the browser does not become the default again.
+
+## Player Scope
+
+1. The product goal is parity with a normal logged-in website player, headlessly, and nothing more.
+2. In scope: anything a regular player can reach through public auth, `/start`, and the session transport/message surface.
+3. Out of scope for the shipped client: admin endpoints, operator credentials, service-role keys, `GB_API_TOKEN`, and any direct secret-backed gameplay RPCs unavailable to regular players.
+4. Secret-backed edge functions may still be traced to understand server semantics, but the shipped client must not depend on them.
 
 ## Canonical Trace Method
 
@@ -66,8 +73,8 @@ These open UI panels or modals. They are not the real gameplay operation. The re
 
 When adding a new headless feature, default in this order:
 
-1. direct edge-function method
-2. direct Pipecat session message
+1. public player edge-function method
+2. public player Pipecat session message
 3. temporary off-path diagnostics only, never the shipped feature path
 
 If a feature currently seems to need the browser, the next question should be: "What semantic action is this UI actually triggering?"
@@ -96,16 +103,15 @@ Current expected variables include:
 ## Local Vs Live Authority
 
 1. Do not assume a local bot or transport server can advance a live character by itself.
-2. If the client is pointed at the live production project, protected gameplay still requires a trusted gameplay token such as `GB_API_TOKEN`.
+2. If the client is pointed at the live production project, secret-backed gameplay still requires credentials that regular players do not have.
 3. A local session-control API only removes the WebRTC and browser dependency. It does not remove the live gameplay auth boundary.
-4. If trusted live gameplay credentials are unavailable, the fallback is a fully local stack:
-   - local edge functions
-   - local bot or session server
-   - local auth and database state
-5. Before investing in more local transport work, decide which mode applies:
-   - live production character with trusted token
-   - fully local stack under our control
-6. Record that choice in docs before adding new transport or server features so the repo stays honest about what a feature can actually unblock.
+4. The product goal is live production player parity. A fully local stack is not a substitute goal.
+5. Local servers, local bots, or local transports are only in scope when they directly help one of:
+   - reproduce a live transport failure
+   - isolate a protocol mismatch
+   - prototype an interface that can also be used against live production
+6. Do not spend feature work on local-only gameplay surfaces or secret-backed production surfaces that cannot plausibly be applied to the live player path.
+7. Before investing in local transport or server work, write down exactly how that work is expected to unblock live production control.
 
 ## Key Files
 

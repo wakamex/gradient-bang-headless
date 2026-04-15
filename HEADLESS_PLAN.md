@@ -13,15 +13,15 @@ The intent is not just to scaffold code, but to keep a running record of:
 
 ## Local Vs Live Constraint
 
-There are two different targets, and they should not be conflated:
+There are two different environments, but only one product target:
 
-- live production gameplay
+- live production player parity
 - a fully local stack
 
 Current proven constraint:
 
 - running transport or bot code locally does not, by itself, unlock live gameplay
-- if the bot still talks to the live production Supabase edge functions, protected gameplay requires a trusted `X-API-Token`
+- if the bot still talks to the live production Supabase edge functions, secret-backed gameplay requires credentials a regular player does not have
 - the upstream bot path uses `AsyncGameClient` in Supabase mode, and that client expects a trusted gameplay token for protected calls
 
 Implication:
@@ -29,16 +29,20 @@ Implication:
 - a plain local session-control API is useful, but only in one of these two cases:
   - it is deployed on the live service we do not control
   - or it is used against a fully local stack that we do control
+- for this repo, the second case is diagnostic only; it is not the success condition
 
-Fallback decision rule:
+Scope rule:
 
-- if trusted live gameplay credentials are available, keep pushing the live character
-- if they are not available, the clean path is to run a fully local stack and use the headless client against that stack instead of pretending local transport work alone will cross the live auth boundary
+- the headless client is only useful if it improves access to the live game using the same capabilities available to a normal website player
+- local-only features are out of scope unless they reduce uncertainty or implementation risk for the live path
+- when local work is proposed, it should be framed as a diagnostic harness for the live target, not as an alternate product goal
+- secret-backed production endpoints are not a success path for the shipped client, even if they are useful for reverse-mapping server behavior
 
 ## Goal
 
-Reach the deepest playable headless path available from the public production
-surface at `https://api.gradient-bang.com/functions/v1`, while committing each
+Reach the deepest playable headless path available to a normal website player
+from the public production surface at
+`https://api.gradient-bang.com/functions/v1`, while committing each
 incremental capability along the way.
 
 ## Proven Production Surface
@@ -77,7 +81,8 @@ Implemented for trusted use only:
 - generic gameplay function calls with `X-API-Token`
 - `events_since` polling
 
-These are not the public path for a player-distributed headless client.
+These are diagnostic tools for understanding the backend. They are not the
+target product surface for a player-distributed headless client.
 
 ### Session Transport
 
@@ -169,10 +174,10 @@ Covered indirectly, but not counted in the `20`:
 Interpretation:
 
 - the headless client already covers the public bootstrap path cleanly
-- it also covers a small but useful slice of protected gameplay RPCs
-- the biggest remaining gap is not scaffolding, but access: most gameplay
-  endpoints still require trusted `X-API-Token` auth or a working public
-  session transport
+- it also covers a small but useful slice of secret-backed gameplay RPCs for
+  reverse-mapping and diagnostics
+- the actual product gap is not scaffolding, but access: the regular-player
+  gameplay path still depends on a working public session transport
 
 ## Planned Commit Sequence
 
@@ -191,13 +196,18 @@ Success condition:
 
 Commit scope:
 
-- replace generic protected gameplay calls with named client methods
-- expose named CLI commands for the proven edge-function surface
-- remove pressure to use browser prompts for actions that already have direct RPCs
+- replace generic gameplay calls with named client methods where that improves
+  tracing, diagnostics, or player-surface parity
+- expose named CLI commands for the proven public and diagnostic edge-function
+  surface without making trusted-token paths part of the product goal
+- remove pressure to use browser prompts for actions that already have direct
+  semantic paths
 
 Success condition:
 
-- trusted users can call common gameplay endpoints without hand-writing JSON or endpoint names
+- the repo can reason about gameplay operations without hand-writing JSON or
+  endpoint names, while keeping the shipped client biased toward the public
+  player path
 
 ### 3. Semantic Session Actions
 
@@ -282,7 +292,7 @@ Current mitigation:
 - bridge-level `requestTimeoutMs`
 - transport-ready fallback when `bot_ready` does not arrive
 
-### Local Server Scope Limit
+### Local Diagnostics Scope Limit
 
 Observed architectural limit:
 
@@ -291,9 +301,9 @@ Observed architectural limit:
 
 What local server work can still do:
 
-- remove browser and WebRTC complexity for local testing
-- provide a clean HTTP control plane for a fully local stack
-- serve as the right long-term interface if a deployable server path ever becomes available
+- remove browser and WebRTC complexity while reproducing live failures locally
+- provide a controlled harness for comparing live and local protocol behavior
+- serve as a staging surface for features that would also help if a deployable live-compatible path is found
 
 Current next diagnostic:
 
@@ -304,14 +314,15 @@ Current next diagnostic:
 
 ### Public Gameplay API Access
 
-Most direct gameplay edge functions still require `X-API-Token`.
+Most direct gameplay edge functions still require secret-backed auth.
 
 That means the public player path should continue to prioritize the bot/session
 surface over direct edge-function gameplay calls.
 
 ## Immediate Next Step
 
-1. replace generic gameplay calls with named edge-function methods and CLI commands
-2. keep the supported client surface browser-free
-3. keep pushing the pure Node public transport until it emits real Pipecat frames
-4. keep pushing the live character forward and record each newly proven capability
+1. keep the supported client surface browser-free
+2. keep pushing the pure Node public transport until it emits real Pipecat frames
+3. prioritize anything the website itself can do with public player credentials
+4. use local tooling and secret-backed traces only when they directly help explain or unblock the live production player path
+5. keep pushing the live character forward and record each newly proven capability
