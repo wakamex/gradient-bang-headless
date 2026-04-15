@@ -18,6 +18,8 @@ from .http import (
     dump_json,
 )
 
+TERMINAL_ENGINE_STATES = {"COMPLETED", "FAILED", "IDLE"}
+
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
@@ -544,7 +546,7 @@ async def dispatch(args: argparse.Namespace) -> int:
             final_result = command_result
             stop_reason = "watch_timeout"
             initial_state = _extract_engine_status(command_result)
-            if initial_state in {"COMPLETED", "IDLE"}:
+            if initial_state in TERMINAL_ENGINE_STATES:
                 stop_reason = f"engine_status:{initial_state.lower()}"
             else:
                 started_at = asyncio.get_running_loop().time()
@@ -561,7 +563,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                         }
                     )
                     final_result = status_result
-                    if engine_state in {"COMPLETED", "IDLE"}:
+                    if engine_state in TERMINAL_ENGINE_STATES:
                         stop_reason = f"engine_status:{engine_state.lower()}"
                         break
             print(

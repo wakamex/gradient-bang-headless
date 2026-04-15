@@ -102,6 +102,7 @@ Newest long-task support:
 
 - a watch mode can now keep a session open and poll status while a local task runs
 - long-running travel or trading objectives no longer require repeated prompt spam just to observe completion
+- failed task plans now stop the watcher immediately instead of waiting out the full timeout
 
 ## Planned Commit Sequence
 
