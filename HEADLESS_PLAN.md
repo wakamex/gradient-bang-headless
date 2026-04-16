@@ -223,15 +223,15 @@ Latest live state observed through the session surface:
 - personal ship warp power: `332`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `4794` with `455/500` warp
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `3513` with `434/500` warp on a still-running exploration task
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: `30` Retro Organics
 - fighters: `300`
-- known sectors: `333`
-- corporation sectors visited: `327`
+- known sectors: `339`
+- corporation sectors visited: `333`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `333` known sectors, currently observed at rank `35`
+- visible exploration board entry: `339` known sectors, currently observed at rank `35`
 - visible trading board entry: `251558` total volume, currently observed at rank `28`
 - visible wealth board entry: currently observed at rank `68` with visible row value `43387`
 
@@ -474,6 +474,13 @@ Latest live progression proved:
   - corporation sectors visited `316 -> 327`
   - `gbheadless Auto Probe I` moved `3293 -> 4794`
   - visible exploration improved `36 -> 35`
+- pushed exploration again immediately after that:
+  - the bounded wrapper returned before the corp task fully stopped
+  - but live map state still advanced from `333 -> 339`
+  - corporation sectors visited advanced `327 -> 333`
+  - the probe was last observed continuing through sectors `2547` and `3513`
+  - visible exploration stayed at rank `35`, but the next visible row gap
+    tightened to `3`
 
 Interpretation:
 

@@ -17,10 +17,10 @@ in the live Gradient Bang production game.
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
   - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-  - `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `4794` with `455/500` warp
+  - `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `3513` with `434/500` warp on a still-running exploration task
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `333` known sectors, currently observed at rank `35`
+  - exploration: on the visible board at `339` known sectors, currently observed at rank `35`
   - wealth: on the visible board, currently observed at rank `68` with visible row value `43,387`
   - trading: on the visible board, currently observed at rank `28` with `251,558` total trade volume across `289` trades
 - Completed quests:
@@ -577,6 +577,19 @@ in the live Gradient Bang production game.
   - exploration remains the cleanest board to push because probe runs compound without disturbing the personal ship
   - `session-wealth-loadout` is now proven as the fastest wealth recovery tool after any trading liquidation
   - trading still wants shorter explicit route batches, not one long unattended run
+- Took one more `9`-sector exploration push immediately after that and hit the
+  other familiar live edge:
+  - the bounded wrapper returned before the corp task fully stopped
+  - but the live state still advanced usefully
+  - known sectors moved `333 -> 339`
+  - the probe was last observed continuing through sectors `2547` and `3513`
+  - visible exploration stayed rank `35`, but the next visible row tightened
+    from `9` away to only `3`
+- That does not change the strategic conclusion; it sharpens it:
+  - probe exploration is still the best low-risk leaderboard lever
+  - but long corp exploration runs can keep advancing after the bounded wrapper
+    returns, so the narrative needs to record both the returned result and the
+    later observed map state
 
 ## Personal Impressions
 
