@@ -463,6 +463,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     session_trade_order.add_argument("--event-timeout-seconds", type=float, default=45.0)
 
+    session_wealth_loadout = sub.add_parser(
+        "session-wealth-loadout",
+        help="Connect a session and buy the cheapest currently sellable cargo to maximize immediate leaderboard wealth",
+    )
+    _add_session_connect_args(session_wealth_loadout)
+    session_wealth_loadout.set_defaults(wait_for_task_finish=True)
+    session_wealth_loadout.add_argument(
+        "--wait-for-task-finish",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_wealth_loadout.add_argument("--event-timeout-seconds", type=float, default=45.0)
+
     session_purchase_ship = sub.add_parser(
         "session-purchase-ship",
         help="Connect a session and send the exact website ship purchase prompt",
@@ -1726,6 +1739,26 @@ async def dispatch(args: argparse.Namespace) -> int:
                         "prompt": prompt,
                         "result": action_result,
                         "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-wealth-loadout":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_wealth_loadout(
+                bridge,
+                wait_for_finish=args.wait_for_task_finish,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -3289,6 +3322,94 @@ async def _run_move_to_sector(
         "segments": segments,
         "stop_reason": stop_reason,
         "final_status": current_status,
+    }
+
+
+def _select_wealth_loadout(summary: dict[str, Any]) -> dict[str, Any]:
+    port_code = summary.get("port_code")
+    empty_holds = _coerce_int(summary.get("empty_holds"))
+    ship_credits = _coerce_int(summary.get("ship_credits"))
+    if empty_holds <= 0:
+        raise HeadlessBridgeError("session-wealth-loadout", "no empty holds available")
+    if ship_credits <= 0:
+        raise HeadlessBridgeError("session-wealth-loadout", "no ship credits available")
+
+    choices: list[dict[str, Any]] = []
+    for commodity in RESOURCE_PORT_CODE_ORDER:
+        if not _port_allows_buy(port_code, commodity):
+            continue
+        price = _port_price(summary, commodity)
+        if price is None or price <= 0:
+            continue
+        quantity = min(empty_holds, ship_credits // price)
+        if quantity <= 0:
+            continue
+        choices.append(
+            {
+                "commodity": commodity,
+                "price_per_unit": price,
+                "quantity": quantity,
+                "estimated_wealth_delta": quantity * max(0, 100 - price),
+            }
+        )
+
+    if not choices:
+        raise HeadlessBridgeError(
+            "session-wealth-loadout",
+            "current sector does not sell any affordable commodities",
+            payload={"summary": summary},
+        )
+
+    choices.sort(
+        key=lambda item: (
+            item["price_per_unit"],
+            -item["estimated_wealth_delta"],
+            item["commodity"],
+        )
+    )
+    return choices[0]
+
+
+async def _run_wealth_loadout(
+    bridge: HeadlessBridgeProcess,
+    *,
+    wait_for_finish: bool,
+    timeout: float,
+) -> dict[str, Any]:
+    initial_status = await _fetch_status_snapshot_with_retries(
+        bridge,
+        timeout=min(timeout, 30.0),
+        context="session-wealth-loadout",
+    )
+    initial_summary = initial_status["summary"]
+    selection = _select_wealth_loadout(initial_summary)
+    prompt = build_trade_order_prompt(
+        trade_type="BUY",
+        quantity=selection["quantity"],
+        commodity=selection["commodity"],
+        price_per_unit=selection["price_per_unit"],
+    )
+    action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
+    watch_result = None
+    final_status = initial_status
+    if wait_for_finish:
+        watch_result = await _watch_player_task(
+            bridge,
+            wait_for_finish=True,
+            timeout=timeout,
+        )
+        final_status = await _fetch_status_snapshot_with_retries(
+            bridge,
+            timeout=min(timeout, 30.0),
+            context="session-wealth-loadout",
+        )
+    return {
+        "selection": selection,
+        "prompt": prompt,
+        "initial_status": initial_status,
+        "result": action_result,
+        "watch": watch_result,
+        "final_status": final_status,
     }
 
 

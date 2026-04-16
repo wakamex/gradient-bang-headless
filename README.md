@@ -23,6 +23,7 @@ This scaffold supports:
 - first-class live session reads for status, ports, map, chat history, ship lists, ship definitions, corporation data, task events, and quest status
 - a first-class `session-trade-opportunities` helper that ranks the current known-port graph
 - a first-class `session-auto-trade-loop` that picks a route for `wealth`, `trading`, or raw `profit`
+- a first-class `session-wealth-loadout` helper that buys the cheapest legal full hold at the current port to maximize immediate wealth-board value
 - a first-class `session-move-to-sector` helper for segmented exact movement with status recovery
 - a first-class `session-corp-move-to-sector` helper for repeated partial corporation-ship moves toward a target sector
 - a first-class `session-nearest-mega-port` helper for recharge-route discovery
@@ -145,6 +146,9 @@ gb-headless session-trade-order \
   --commodity neuro_symbolics \
   --quantity 20 \
   --price-per-unit 30
+gb-headless session-wealth-loadout \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
 gb-headless session-purchase-ship \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -297,6 +301,11 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   estimating inter-port distance from hop deltas alone, and it now respects
   port `B`/`S` directionality plus live buy-side stock so invalid routes do
   not get promoted just because the posted prices look attractive.
+- `session-wealth-loadout` is the preferred short-hop wealth helper when the
+  goal is immediate leaderboard value instead of realized trading profit. It
+  inspects the current port, picks the cheapest commodity the port legally
+  sells, buys the largest affordable full hold, and waits for the resulting
+  player-ship task to finish.
 - `session-auto-trade-loop` is the preferred execution surface once a goal is
   clear. It uses `session-trade-opportunities` internally, picks the current
   best visible route for `wealth`, `trading`, or raw `profit`, then runs the
