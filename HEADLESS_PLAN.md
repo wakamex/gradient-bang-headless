@@ -27,10 +27,13 @@ The intent is not just to scaffold code, but to keep a running record of:
    - exploration through repeated `session-corp-explore-loop` frontier runs
    - trading through short exact-order or single-route batches on the current
      best visible profit route, with `session-liquidate-cargo` used to reset
-     stranded holds cleanly
+     stranded holds cleanly and `session-load-cargo` used to restock the exact
+     intended commodity at the current port
    - wealth through realized short-profit cycles first, with
      `session-wealth-loadout` used as the fast board-padding helper when the
      ship is already parked on a cheap seller
+   - treat live stock as a first-class route constraint; the best visible route
+     is only as good as the commodity quantity actually available today
    - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
    - short-term operational constraint: long unattended trade loops can still
      advance live state without returning a clean bounded result, so short
@@ -159,6 +162,7 @@ Implemented:
 - map-backed route ranking using the live `session-map` graph instead of hop-delta approximations
 - a first-class `session-auto-trade-loop` that chooses a route by goal and runs it
 - a first-class `session-wealth-loadout` that converts current-port credits into immediate wealth-board value through the cheapest legal full hold
+- a first-class `session-load-cargo` that exact-buys a chosen commodity using live price, credits, capacity, and stock
 - sell-recovery cycle accounting so successful trade-order cleanups count as real completed cycles
 - first-class logistics helpers for warp recharge and credit transfers
 - a deterministic `session-trade-route-loop` built from bounded watched tasks,
@@ -224,22 +228,22 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `780`
-- personal ship credits: `6787`
-- personal ship warp power: `332`
+- personal ship sector: `1808`
+- personal ship credits: `9369`
+- personal ship warp power: `197`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `3513` with `434/500` warp on a still-running exploration task
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `3336` with `421/500` warp after a partial frontier run
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: `30` Retro Organics
 - fighters: `300`
-- known sectors: `339`
-- corporation sectors visited: `333`
+- known sectors: `344`
+- corporation sectors visited: `338`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `339` known sectors, currently observed at rank `35`
-- visible trading board entry: `251558` total volume, currently observed at rank `28`
-- visible wealth board entry: currently observed at rank `68` with visible row value `43387`
+- visible exploration board entry: `344` known sectors, currently observed at rank `34`
+- visible trading board entry: `271312` total volume, currently observed at rank `27`
+- visible wealth board entry: currently observed at rank `64` with visible row value `45969`
 
 Latest live progression proved:
 
@@ -525,13 +529,13 @@ Latest live progression proved:
 Current live state after this pass:
 
 - Kestrel in sector `1808`
-- `7477` credits
-- `30` `NS`
-- `227/500` warp
-- `gbheadless Auto Probe I` in sector `2814` with `423/500` warp
-- exploration `344`, visible rank `33`
-- trading `261728`, visible rank `27`
-- wealth `44077`, visible rank `67`
+- `9369` credits
+- `30` `RO`
+- `197/500` warp
+- `gbheadless Auto Probe I` in sector `3336` with `421/500` warp
+- exploration `344`, visible rank `34`
+- trading `271312`, visible rank `27`
+- wealth `45969`, visible rank `64`
 
 Interpretation:
 
@@ -548,13 +552,37 @@ Interpretation:
   - keep using fresh `1000`-credit probes from a mega-port when the goal is exploration rank
   - keep using `session-liquidate-cargo` whenever a stranded hold is blocking
     the next deliberate route choice
+  - keep using `session-load-cargo` to restock exact commodities at the current
+    port instead of assuming a full hold is always available
   - keep using `session-wealth-loadout` only for quick board padding at a cheap
     current port, not as the main wealth-growth engine
-  - keep the current QF trading route in short explicit batches; it is still
-    the best proven wealth lever, but the long unattended loop is not clean
+  - keep the current `1808 <-> 256` shuttle in short exact batches; it is
+    still the best proven combined wealth/trading lever, but the `QF` side can
+    stock out and temporarily cap the route
   - harden corp-task watching and large-batch trade looping so the productive live paths are also operationally clean
   - either make unowned-ship collection work or document it as a live bot/path
     bug with clear reproduction
+
+Latest production-proven additions and findings:
+
+- added `session-load-cargo` as the missing exact buy-side primitive and proved
+  it live on both sides of the current shuttle:
+  - `30` `QF` bought at sector `256`
+  - `30` `RO` bought at sector `1808`
+- used the exact `1808 <-> 256` `RO/QF` shuttle for one clean full cycle:
+  - wealth improved `45457 -> 45817`
+  - trading improved `267308 -> 270248`
+- pushed the same shuttle again and hit the live stock limiter:
+  - sector `256` `QF` stock fell to `8`
+  - `session-load-cargo` capped the buy correctly at `8` units instead of
+    sending an impossible full-hold order
+  - even the constrained cycle still improved the boards to `271312` trading
+    and `45969` wealth
+- pushed `gbheadless Auto Probe I` again:
+  - the probe moved from sector `2814` to `3336`
+  - the bounded corp watcher still returned before a clean finish
+  - exploration board value stayed flat at `344`, so ship movement and visible
+    board updates are still not synchronous
 
 ## User-Facing Surface Tracking
 
@@ -612,6 +640,9 @@ Headless convenience wrappers, not counted separately:
 - `session-recharge-warp`
 - `session-transfer-credits`
 - `session-trade-route-loop`
+- `session-liquidate-cargo`
+- `session-load-cargo`
+- `session-wealth-loadout`
 
 Not first-class yet:
 

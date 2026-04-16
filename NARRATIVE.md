@@ -11,18 +11,19 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `780`
-- Personal ship credits: `6,787`
-- Personal ship warp: `332/500`
+- Personal ship sector: `1808`
+- Personal ship credits: `9,369`
+- Personal ship cargo: `30` `RO`
+- Personal ship warp: `197/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
   - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-  - `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `3513` with `434/500` warp on a still-running exploration task
+  - `gbheadless Auto Probe I` (`autonomous_probe`) in sector `3336` with `421/500` warp after the latest frontier push
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `339` known sectors, currently observed at rank `35`
-  - wealth: on the visible board, currently observed at rank `68` with visible row value `43,387`
-  - trading: on the visible board, currently observed at rank `28` with `251,558` total trade volume across `289` trades
+  - exploration: on the visible board at `344` known sectors, currently observed at rank `34`
+  - wealth: on the visible board, currently observed at rank `64` with visible row value `45,969`
+  - trading: on the visible board, currently observed at rank `27` with `271,312` total trade volume across `321` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
@@ -32,11 +33,12 @@ in the live Gradient Bang production game.
   - use port-code-aware, map-backed route selection instead of naive price comparisons
   - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
   - use `session-wealth-loadout` when the ship is parked on a cheap legal seller and the immediate goal is wealth-board rank instead of realized profit
-  - keep trading loops short and observable; the current `1469 -> 780` QF route is productive, but large batches can still strand the ship mid-cycle with a loaded hold
+  - use `session-load-cargo` when the next step is to buy a specific commodity at the current port; it now respects live price, credits, capacity, and stock
+  - keep trading loops short and observable; the best current combined wealth/trading shuttle is the exact `1808 <-> 256` `RO/QF` cycle, but the `QF` side can stock out and temporarily cap the route
   - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
   - use cheap cargo as a wealth-board lever, because the live leaderboard currently values cargo at a flat `100` credits per unit
   - prefer fresh `1000`-credit autonomous probes over long rescue chains when the goal is exploration rank
-  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now being used as a rotating wealth/trading shuttle around sector `1413`
+  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now being used as a rotating wealth/trading shuttle around sectors `1808` and `256`
   - keep trade loops chunked and observable; large blind route batches are productive but still too opaque to count as a clean bounded surface
 
 ## Timeline
@@ -661,23 +663,82 @@ in the live Gradient Bang production game.
 
 - Kestrel:
   - sector `1808`
-  - `7477` credits
-  - `30` `NS`
-  - `227/500` warp
+  - `9369` credits
+  - `30` `RO`
+  - `197/500` warp
 - `gbheadless Auto Probe I`:
-  - sector `2814`
-  - `423/500` warp
+  - sector `3336`
+  - `421/500` warp
 - Public boards:
-  - exploration `344`, visible rank `33`
-  - trading `261728`, visible rank `27`
-  - wealth `44077`, visible rank `67`
+  - exploration `344`, visible rank `34`
+  - trading `271312`, visible rank `27`
+  - wealth `45969`, visible rank `64`
 - Strategy from here:
   - use the probe whenever the cheapest move is to gain sectors
   - use `session-liquidate-cargo` whenever the ship is loaded with the wrong
     hold for the next deliberate route
-  - use short profitable QF cycles for real wealth growth
+  - use the exact `1808 <-> 256` shuttle as the current best combined
+    wealth/trading route, but watch the `QF` stock at `256`
+  - use `session-load-cargo` to restock the intended commodity exactly instead
+    of depending on a broad route loop to infer the right buy
   - treat `session-wealth-loadout` as a quick board-padding move, not the main
     wealth engine
+
+### Exact Buy-Side Control Becomes A First-Class Surface
+
+- Added `session-load-cargo` because the client had a clean exact seller and a
+  clean "buy the cheapest thing here" helper, but still lacked a bounded exact
+  buy primitive for deliberate route work.
+- Proved it live on the current local shuttle:
+  - sold `30` `RO` at sector `256` with `session-liquidate-cargo`
+  - bought `30` `QF` at sector `256` with `session-load-cargo`
+  - sold `30` `QF` back at sector `1808`
+  - bought `30` `RO` again at sector `1808`
+- That single full exact cycle moved the public boards materially:
+  - wealth improved from rank `66` to rank `64`
+  - trading volume improved from `267308` to `270248`
+- This is a cleaner trading surface than the earlier one-way route loop for the
+  same two sectors because every buy and sell is now explicit and verified
+  against the live port state.
+
+### Live Stock Limits Matter More Than Route Theory
+
+- Pushed the same `1808 <-> 256` shuttle again immediately after the clean
+  `30/30` cycle and hit the real live limiter: `QF` stock at sector `256`
+  collapsed from `38` to `8`.
+- `session-load-cargo` handled that correctly:
+  - it capped the buy order to `8` instead of sending an impossible full-hold
+    purchase
+  - it adapted to the live price move from `27` to `28`
+  - it still completed the partial return leg cleanly
+- The second cycle therefore became:
+  - `30` `RO` sold at `256`
+  - `8` `QF` bought at `256`
+  - `8` `QF` sold at `1808`
+  - `30` `RO` reloaded at `1808`
+- That was still enough to keep the account climbing:
+  - trading improved again to `271312`
+  - wealth improved again to `45969`
+  - the next visible wealth row is now only `155` away
+  - the next visible trading row is now `7997` away
+- Strategy change from this:
+  - the `1808 <-> 256` shuttle is still the best current combined
+    wealth/trading lever
+  - but it is no longer a pure theoretical full-hold route
+  - live stock exhaustion is now part of route viability, so the client should
+    prefer exact stock-aware batches over blind repeated loops
+
+### Probe Progress Still Outruns The Bounded Watcher
+
+- Ran another bounded `session-corp-explore-loop` on `gbheadless Auto Probe I`
+  from sector `2814`.
+- The same corp-task pattern held:
+  - the watcher returned on task start instead of a clean task finish
+  - but the ship still advanced materially
+  - the probe was later observed in sector `3336` with `421/500` warp
+- The public exploration board did not move on that pass and remains tied at
+  `344`, which is a useful reminder that corp movement progress and visible
+  leaderboard movement are related but not synchronous.
 
 ## Personal Impressions
 
