@@ -91,3 +91,68 @@ def build_collect_unowned_ship_prompt(*, ship_id: str) -> str:
     if not normalized_ship_id:
         raise ValueError("ship_id is required")
     return f"collect unowned ship id {normalized_ship_id} in sector"
+
+
+def build_engage_combat_prompt(*, player_name: str) -> str:
+    normalized_player_name = player_name.strip()
+    if not normalized_player_name:
+        raise ValueError("player_name is required")
+    return f"engage combat with player with name {normalized_player_name} in this sector"
+
+
+def build_collect_salvage_prompt(*, salvage_id: str) -> str:
+    normalized_salvage_id = salvage_id.strip()
+    if not normalized_salvage_id:
+        raise ValueError("salvage_id is required")
+    return f"collect salvage id {normalized_salvage_id} in sector"
+
+
+def build_garrison_deploy_prompt(
+    *,
+    quantity: int,
+    mode: str = "offensive",
+    toll_amount: int | None = None,
+) -> str:
+    if quantity <= 0:
+        raise ValueError("quantity must be > 0")
+    normalized_mode = mode.strip().lower()
+    if normalized_mode not in {"offensive", "defensive", "toll"}:
+        raise ValueError(f"unsupported garrison mode {mode!r}")
+    if normalized_mode == "toll":
+        if toll_amount is None:
+            raise ValueError("toll_amount is required when mode is 'toll'")
+        if toll_amount < 0:
+            raise ValueError("toll_amount must be >= 0")
+        return (
+            f"Leave {quantity} fighters behind in this sector as a toll garrison "
+            f"charging {toll_amount} credits."
+        )
+    article = "an" if normalized_mode.startswith("o") else "a"
+    return f"Leave {quantity} fighters behind in this sector as {article} {normalized_mode} garrison."
+
+
+def build_garrison_collect_prompt(*, quantity: int) -> str:
+    if quantity <= 0:
+        raise ValueError("quantity must be > 0")
+    return f"Collect {quantity} fighters from the garrison in this sector."
+
+
+def build_garrison_update_prompt(*, mode: str, toll_amount: int | None = None) -> str:
+    normalized_mode = mode.strip().lower()
+    if normalized_mode not in {"offensive", "defensive", "toll"}:
+        raise ValueError(f"unsupported garrison mode {mode!r}")
+    parts = [f"Update garrison: mode={normalized_mode}"]
+    if normalized_mode == "toll":
+        if toll_amount is None:
+            raise ValueError("toll_amount is required when mode is 'toll'")
+        if toll_amount < 0:
+            raise ValueError("toll_amount must be >= 0")
+        parts.append(f"tollAmount={toll_amount}")
+    return ", ".join(parts)
+
+
+def build_ship_rename_prompt(*, ship_name: str) -> str:
+    normalized_ship_name = ship_name.strip()
+    if not normalized_ship_name:
+        raise ValueError("ship_name is required")
+    return f"Please rename my ship to '{normalized_ship_name}'"

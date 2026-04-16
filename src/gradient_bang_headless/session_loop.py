@@ -16,6 +16,9 @@ class LoopTargets:
     ship_type: str | None = None
     quest_code: str | None = None
     quest_step_name: str | None = None
+    corp_ship_count: int | None = None
+    corp_ship_type: str | None = None
+    corp_ship_type_count: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -24,6 +27,9 @@ class LoopTargets:
             "ship_type": self.ship_type,
             "quest_code": self.quest_code,
             "quest_step_name": self.quest_step_name,
+            "corp_ship_count": self.corp_ship_count,
+            "corp_ship_type": self.corp_ship_type,
+            "corp_ship_type_count": self.corp_ship_type_count,
         }
 
     def active(self) -> bool:
@@ -153,6 +159,28 @@ class SessionStateTracker:
                 _quest_summary(quest).get("current_step_name") == targets.quest_step_name
                 for quest in self.quests.values()
             )
+
+        corporation = self.corporation if isinstance(self.corporation, dict) else {}
+        corporation_ships = corporation.get("ships") if isinstance(corporation, dict) else None
+        active_corp_ships = (
+            [ship for ship in corporation_ships if isinstance(ship, dict)]
+            if isinstance(corporation_ships, list)
+            else []
+        )
+
+        if targets.corp_ship_count is not None:
+            results["corp_ship_count"] = len(active_corp_ships) >= targets.corp_ship_count
+
+        if targets.corp_ship_type is not None:
+            matching_corp_ships = [
+                ship
+                for ship in active_corp_ships
+                if ship.get("ship_type") == targets.corp_ship_type
+            ]
+            required_count = targets.corp_ship_type_count or 1
+            results["corp_ship_type"] = len(matching_corp_ships) >= required_count
+            if targets.corp_ship_type_count is not None:
+                results["corp_ship_type_count"] = len(matching_corp_ships) >= targets.corp_ship_type_count
 
         return results
 
@@ -500,11 +528,22 @@ def _task_events_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
 def _corporation_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
+    ships = payload.get("ships")
+    ship_types: dict[str, int] = {}
+    if isinstance(ships, list):
+        for ship in ships:
+            if not isinstance(ship, dict):
+                continue
+            ship_type = ship.get("ship_type")
+            if not isinstance(ship_type, str) or not ship_type:
+                continue
+            ship_types[ship_type] = ship_types.get(ship_type, 0) + 1
     return {
         "corp_id": payload.get("corp_id"),
         "name": payload.get("name"),
         "member_count": payload.get("member_count"),
-        "ship_count": len(payload.get("ships")) if isinstance(payload.get("ships"), list) else None,
+        "ship_count": len(ships) if isinstance(ships, list) else None,
+        "ship_types": ship_types,
     }
 
 

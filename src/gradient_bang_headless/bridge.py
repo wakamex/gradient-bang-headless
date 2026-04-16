@@ -402,6 +402,48 @@ class HeadlessBridgeProcess:
             timeout=timeout,
         )
 
+    async def salvage_collect(self, salvage_id: str, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.send_client_message_waiting(
+            "salvage_collect",
+            data={"salvage_id": salvage_id},
+            expected_server_events="salvage.collected",
+            timeout=timeout,
+        )
+
+    async def combat_action(
+        self,
+        *,
+        combat_id: str,
+        action: str,
+        round_number: int,
+        commit: int | None = None,
+        target_id: str | None = None,
+        to_sector: int | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "combat_id": combat_id,
+            "action": action,
+            "round": round_number,
+        }
+        if commit is not None:
+            payload["commit"] = commit
+        if target_id is not None:
+            payload["target_id"] = target_id
+        if to_sector is not None:
+            payload["to_sector"] = to_sector
+        return await self.send_client_message_waiting(
+            "combat-action",
+            data=payload,
+            expected_server_events={
+                "combat.action_accepted",
+                "combat.action_response",
+                "combat.round_resolved",
+                "combat.ended",
+            },
+            timeout=timeout,
+        )
+
     async def skip_tutorial(self, *, wait_seconds: float = 0.0) -> dict[str, Any]:
         send_result = await self.send_client_message("skip-tutorial", {})
         if wait_seconds > 0:

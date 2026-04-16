@@ -11,7 +11,12 @@ from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOp
 from .frontend_prompts import (
     build_corporation_ship_purchase_prompt,
     build_corporation_ship_task_prompt,
+    build_garrison_collect_prompt,
+    build_garrison_deploy_prompt,
     build_collect_unowned_ship_prompt,
+    build_engage_combat_prompt,
+    build_garrison_update_prompt,
+    build_ship_rename_prompt,
     build_ship_purchase_prompt,
     build_trade_order_prompt,
 )
@@ -295,6 +300,13 @@ def build_parser() -> argparse.ArgumentParser:
     session_trade_order.add_argument("--quantity", required=True, type=int)
     session_trade_order.add_argument("--price-per-unit", required=True, type=int)
     session_trade_order.add_argument("--wait-seconds", type=float, default=0.0)
+    session_trade_order.set_defaults(wait_for_task_finish=True)
+    session_trade_order.add_argument(
+        "--wait-for-task-finish",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_trade_order.add_argument("--event-timeout-seconds", type=float, default=45.0)
 
     session_purchase_ship = sub.add_parser(
         "session-purchase-ship",
@@ -305,6 +317,13 @@ def build_parser() -> argparse.ArgumentParser:
     session_purchase_ship.add_argument("--replace-ship-id", required=True)
     session_purchase_ship.add_argument("--replace-ship-name", required=True)
     session_purchase_ship.add_argument("--wait-seconds", type=float, default=0.0)
+    session_purchase_ship.set_defaults(wait_for_task_finish=True)
+    session_purchase_ship.add_argument(
+        "--wait-for-task-finish",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_purchase_ship.add_argument("--event-timeout-seconds", type=float, default=45.0)
 
     session_purchase_corp_ship = sub.add_parser(
         "session-purchase-corp-ship",
@@ -313,6 +332,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_session_connect_args(session_purchase_corp_ship)
     session_purchase_corp_ship.add_argument("--ship-display-name", required=True)
     session_purchase_corp_ship.add_argument("--wait-seconds", type=float, default=0.0)
+    session_purchase_corp_ship.set_defaults(wait_for_task_finish=True)
+    session_purchase_corp_ship.add_argument(
+        "--wait-for-task-finish",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_purchase_corp_ship.add_argument("--event-timeout-seconds", type=float, default=45.0)
 
     session_corp_task = sub.add_parser(
         "session-corp-task",
@@ -333,6 +359,97 @@ def build_parser() -> argparse.ArgumentParser:
     session_collect_unowned_ship.add_argument("--ship-id", required=True)
     session_collect_unowned_ship.add_argument("--event-timeout-seconds", type=float, default=45.0)
     session_collect_unowned_ship.add_argument("--poll-interval-seconds", type=float, default=3.0)
+
+    session_salvage_collect = sub.add_parser(
+        "session-salvage-collect",
+        help="Connect a session, collect salvage via direct session message, and wait for salvage.collected",
+    )
+    _add_session_connect_args(session_salvage_collect)
+    session_salvage_collect.add_argument("--salvage-id", required=True)
+    session_salvage_collect.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_engage_combat = sub.add_parser(
+        "session-engage-combat",
+        help="Connect a session, send the exact website engage-combat prompt, and wait for the first combat event",
+    )
+    _add_session_connect_args(session_engage_combat)
+    session_engage_combat.add_argument("--player-name", required=True)
+    session_engage_combat.add_argument("--event-timeout-seconds", type=float, default=45.0)
+
+    session_combat_action = sub.add_parser(
+        "session-combat-action",
+        help="Connect a session, submit a combat-action message, and wait for the first combat response event",
+    )
+    _add_session_connect_args(session_combat_action)
+    session_combat_action.add_argument("--combat-id", required=True)
+    session_combat_action.add_argument(
+        "--action",
+        required=True,
+        choices=["attack", "brace", "flee", "pay"],
+    )
+    session_combat_action.add_argument("--round", required=True, type=int)
+    session_combat_action.add_argument("--commit", type=int)
+    session_combat_action.add_argument("--target-id")
+    session_combat_action.add_argument("--to-sector", type=int)
+    session_combat_action.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_garrison_deploy = sub.add_parser(
+        "session-garrison-deploy",
+        help="Connect a session, send the proven garrison-deploy prompt, and wait for the player task to finish",
+    )
+    _add_session_connect_args(session_garrison_deploy)
+    session_garrison_deploy.add_argument("--quantity", required=True, type=int)
+    session_garrison_deploy.add_argument(
+        "--mode",
+        choices=["offensive", "defensive", "toll"],
+        default="offensive",
+    )
+    session_garrison_deploy.add_argument("--toll-amount", type=int)
+    session_garrison_deploy.add_argument("--wait-seconds", type=float, default=0.0)
+    session_garrison_deploy.set_defaults(wait_for_task_finish=True)
+    session_garrison_deploy.add_argument(
+        "--wait-for-task-finish",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_garrison_deploy.add_argument("--event-timeout-seconds", type=float, default=45.0)
+
+    session_garrison_collect = sub.add_parser(
+        "session-garrison-collect",
+        help="Connect a session, send the proven garrison-collect prompt, and wait for the player task to finish",
+    )
+    _add_session_connect_args(session_garrison_collect)
+    session_garrison_collect.add_argument("--quantity", required=True, type=int)
+    session_garrison_collect.add_argument("--wait-seconds", type=float, default=0.0)
+    session_garrison_collect.set_defaults(wait_for_task_finish=True)
+    session_garrison_collect.add_argument(
+        "--wait-for-task-finish",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_garrison_collect.add_argument("--event-timeout-seconds", type=float, default=45.0)
+
+    session_garrison_update = sub.add_parser(
+        "session-garrison-update",
+        help="Connect a session, send the exact website garrison-update prompt, and wait for garrison.mode_changed",
+    )
+    _add_session_connect_args(session_garrison_update)
+    session_garrison_update.add_argument(
+        "--mode",
+        required=True,
+        choices=["offensive", "defensive", "toll"],
+    )
+    session_garrison_update.add_argument("--toll-amount", type=int)
+    session_garrison_update.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_rename_ship = sub.add_parser(
+        "session-rename-ship",
+        help="Connect a session, send the current website ship-rename prompt, and wait for status to reflect the new name",
+    )
+    _add_session_connect_args(session_rename_ship)
+    session_rename_ship.add_argument("--ship-name", required=True)
+    session_rename_ship.add_argument("--event-timeout-seconds", type=float, default=45.0)
+    session_rename_ship.add_argument("--poll-interval-seconds", type=float, default=3.0)
 
     session_watch = sub.add_parser(
         "session-watch",
@@ -363,6 +480,9 @@ def build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--target-ship-type")
     loop.add_argument("--target-quest-code")
     loop.add_argument("--target-quest-step-name")
+    loop.add_argument("--target-corp-ship-count", type=int)
+    loop.add_argument("--target-corp-ship-type")
+    loop.add_argument("--target-corp-ship-type-count", type=int)
 
     call = sub.add_parser("call", help="Generic edge-function call")
     call.add_argument("endpoint")
@@ -1105,12 +1225,20 @@ async def dispatch(args: argparse.Namespace) -> int:
                 prompt,
                 wait_seconds=args.wait_seconds,
             )
+            watch_result = None
+            if args.wait_for_task_finish:
+                watch_result = await _watch_player_task(
+                    bridge,
+                    wait_for_finish=True,
+                    timeout=args.event_timeout_seconds,
+                )
             print(
                 dump_json(
                     {
                         "connect": connect_result,
                         "prompt": prompt,
                         "result": action_result,
+                        "watch": watch_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -1126,12 +1254,20 @@ async def dispatch(args: argparse.Namespace) -> int:
                 prompt,
                 wait_seconds=args.wait_seconds,
             )
+            watch_result = None
+            if args.wait_for_task_finish:
+                watch_result = await _watch_player_task(
+                    bridge,
+                    wait_for_finish=True,
+                    timeout=args.event_timeout_seconds,
+                )
             print(
                 dump_json(
                     {
                         "connect": connect_result,
                         "prompt": prompt,
                         "result": action_result,
+                        "watch": watch_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -1147,12 +1283,20 @@ async def dispatch(args: argparse.Namespace) -> int:
                 prompt,
                 wait_seconds=args.wait_seconds,
             )
+            watch_result = None
+            if args.wait_for_task_finish:
+                watch_result = await _watch_player_task(
+                    bridge,
+                    wait_for_finish=True,
+                    timeout=args.event_timeout_seconds,
+                )
             print(
                 dump_json(
                     {
                         "connect": connect_result,
                         "prompt": prompt,
                         "result": action_result,
+                        "watch": watch_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -1210,6 +1354,179 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-salvage-collect":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.salvage_collect(
+                args.salvage_id,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-engage-combat":
+        prompt = _engage_combat_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(prompt)
+            watch_result = await _wait_for_first_combat_event(
+                bridge,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-combat-action":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.combat_action(
+                combat_id=args.combat_id,
+                action=args.action,
+                round_number=args.round,
+                commit=args.commit,
+                target_id=args.target_id,
+                to_sector=args.to_sector,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-garrison-deploy":
+        prompt = _garrison_deploy_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                prompt,
+                wait_seconds=args.wait_seconds,
+            )
+            watch_result = None
+            if args.wait_for_task_finish:
+                watch_result = await _watch_player_task(
+                    bridge,
+                    wait_for_finish=True,
+                    timeout=args.event_timeout_seconds,
+                )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-garrison-collect":
+        prompt = _garrison_collect_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                prompt,
+                wait_seconds=args.wait_seconds,
+            )
+            watch_result = None
+            if args.wait_for_task_finish:
+                watch_result = await _watch_player_task(
+                    bridge,
+                    wait_for_finish=True,
+                    timeout=args.event_timeout_seconds,
+                )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-garrison-update":
+        prompt = _garrison_update_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(prompt)
+            watch_result = await _wait_for_named_server_event(
+                bridge,
+                event_names={"garrison.mode_changed"},
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-rename-ship":
+        prompt = _ship_rename_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(prompt)
+            watch_result = await _wait_for_status_ship_name(
+                bridge,
+                ship_name=args.ship_name,
+                timeout=args.event_timeout_seconds,
+                poll_interval_seconds=args.poll_interval_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-watch":
         if args.duration_seconds < 0:
             raise HeadlessBridgeError("session-watch", "--duration-seconds must be >= 0")
@@ -1238,6 +1555,11 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command in {"loop", "session-loop"}:
         if not args.forever and args.duration_seconds <= 0:
             raise HeadlessBridgeError("loop", "--duration-seconds must be > 0 unless --forever is set")
+        if args.target_corp_ship_type_count is not None and not args.target_corp_ship_type:
+            raise HeadlessBridgeError(
+                "loop",
+                "--target-corp-ship-type-count requires --target-corp-ship-type",
+            )
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
             connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
@@ -1579,6 +1901,9 @@ def _loop_targets_from_args(args: argparse.Namespace) -> LoopTargets:
         ship_type=args.target_ship_type,
         quest_code=args.target_quest_code,
         quest_step_name=args.target_quest_step_name,
+        corp_ship_count=args.target_corp_ship_count,
+        corp_ship_type=args.target_corp_ship_type,
+        corp_ship_type_count=args.target_corp_ship_type_count,
     )
 
 
@@ -1630,6 +1955,48 @@ def _collect_unowned_ship_prompt_from_args(args: argparse.Namespace) -> str:
         return build_collect_unowned_ship_prompt(ship_id=args.ship_id)
     except ValueError as exc:
         raise HeadlessBridgeError("session-collect-unowned-ship", str(exc)) from exc
+
+
+def _engage_combat_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_engage_combat_prompt(player_name=args.player_name)
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-engage-combat", str(exc)) from exc
+
+
+def _garrison_deploy_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_garrison_deploy_prompt(
+            quantity=args.quantity,
+            mode=args.mode,
+            toll_amount=args.toll_amount,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-garrison-deploy", str(exc)) from exc
+
+
+def _garrison_collect_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_garrison_collect_prompt(quantity=args.quantity)
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-garrison-collect", str(exc)) from exc
+
+
+def _garrison_update_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_garrison_update_prompt(
+            mode=args.mode,
+            toll_amount=args.toll_amount,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-garrison-update", str(exc)) from exc
+
+
+def _ship_rename_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_ship_rename_prompt(ship_name=args.ship_name)
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-rename-ship", str(exc)) from exc
 
 
 def _extract_server_event(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -1748,6 +2115,7 @@ async def _watch_corporation_task(
     deadline = asyncio.get_running_loop().time() + timeout
     task_start: dict[str, Any] | None = None
     task_finish: dict[str, Any] | None = None
+    started_task_id: str | None = None
     latest_quest_status: dict[str, Any] | None = None
 
     while True:
@@ -1774,6 +2142,9 @@ async def _watch_corporation_task(
             required_scope="corp_ship",
         ):
             task_start = server_event
+            payload = server_event.get("payload")
+            if isinstance(payload, dict):
+                started_task_id = payload.get("task_id")
             if not wait_for_finish:
                 break
             continue
@@ -1783,6 +2154,13 @@ async def _watch_corporation_task(
             ship_name=ship_name,
             required_scope="corp_ship",
         ):
+            if task_start is None:
+                continue
+            payload = server_event.get("payload")
+            if isinstance(payload, dict) and started_task_id:
+                finish_task_id = payload.get("task_id")
+                if finish_task_id != started_task_id:
+                    continue
             task_finish = server_event
             break
 
@@ -1815,6 +2193,7 @@ async def _watch_corporation_task(
         "stop_reason": stop_reason,
         "task_started": task_start is not None,
         "task_finished": task_finish is not None,
+        "task_id": started_task_id,
         "task_start": task_start,
         "task_finish": task_finish,
         "matched_ship": _select_ship_from_ships_event(
@@ -1833,6 +2212,199 @@ async def _watch_corporation_task(
         result["quests"] = _quest_status_summary(latest_quest_status)
         result["latest_quest_status"] = latest_quest_status
     return result
+
+
+async def _watch_player_task(
+    bridge: HeadlessBridgeProcess,
+    *,
+    wait_for_finish: bool,
+    timeout: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError("session-user-text", "--event-timeout-seconds must be > 0")
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    task_start: dict[str, Any] | None = None
+    task_finish: dict[str, Any] | None = None
+    started_task_id: str | None = None
+
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            event = await bridge.next_event(timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+
+        server_event = _extract_server_event(event)
+        if not isinstance(server_event, dict):
+            continue
+
+        event_name = server_event.get("event")
+        if event_name == "task.start" and _task_event_matches(
+            server_event,
+            ship_id=None,
+            ship_name=None,
+            required_scope="player_ship",
+        ):
+            task_start = server_event
+            payload = server_event.get("payload")
+            if isinstance(payload, dict):
+                started_task_id = payload.get("task_id")
+            if not wait_for_finish:
+                break
+            continue
+        if event_name == "task.finish" and _task_event_matches(
+            server_event,
+            ship_id=None,
+            ship_name=None,
+            required_scope="player_ship",
+        ):
+            if task_start is None:
+                continue
+            payload = server_event.get("payload")
+            if isinstance(payload, dict) and started_task_id:
+                finish_task_id = payload.get("task_id")
+                if finish_task_id != started_task_id:
+                    continue
+            task_finish = server_event
+            break
+
+    stop_reason = "timeout"
+    if task_finish is not None:
+        stop_reason = "task_finish"
+    elif task_start is not None:
+        stop_reason = "task_start"
+
+    post_watch_errors: list[str] = []
+    status_event = None
+    try:
+        status_result = await bridge.get_my_status(timeout=15.0)
+    except HeadlessBridgeError as exc:
+        post_watch_errors.append(str(exc))
+    else:
+        status_event = status_result.get("server_event")
+
+    return {
+        "wait_for_finish": wait_for_finish,
+        "stop_reason": stop_reason,
+        "task_started": task_start is not None,
+        "task_finished": task_finish is not None,
+        "task_id": started_task_id,
+        "task_start": task_start,
+        "task_finish": task_finish,
+        "status": status_event,
+        "post_watch_errors": post_watch_errors,
+    }
+
+
+async def _wait_for_named_server_event(
+    bridge: HeadlessBridgeProcess,
+    *,
+    event_names: set[str],
+    timeout: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError("wait_for_server_event", "--event-timeout-seconds must be > 0")
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            event = await bridge.next_event(timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        server_event = _extract_server_event(event)
+        if not isinstance(server_event, dict):
+            continue
+        event_name = server_event.get("event")
+        if isinstance(event_name, str) and event_name in event_names:
+            return {
+                "success": True,
+                "stop_reason": "matched_event",
+                "matched_event": event_name,
+                "server_event": server_event,
+            }
+
+    return {
+        "success": False,
+        "stop_reason": "timeout",
+        "matched_event": None,
+        "server_event": None,
+    }
+
+
+async def _wait_for_first_combat_event(
+    bridge: HeadlessBridgeProcess,
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError("session-engage-combat", "--event-timeout-seconds must be > 0")
+
+    combat_events = {
+        "combat.round_waiting",
+        "combat.action_accepted",
+        "combat.action_response",
+        "combat.round_resolved",
+        "combat.ended",
+    }
+    deadline = asyncio.get_running_loop().time() + timeout
+    task_start = None
+    task_finish = None
+
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            event = await bridge.next_event(timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        server_event = _extract_server_event(event)
+        if not isinstance(server_event, dict):
+            continue
+        event_name = server_event.get("event")
+        if event_name == "task.start":
+            task_start = server_event
+            continue
+        if event_name == "task.finish":
+            task_finish = server_event
+            continue
+        if isinstance(event_name, str) and event_name in combat_events:
+            return {
+                "success": True,
+                "stop_reason": "combat_event",
+                "matched_event": event_name,
+                "server_event": server_event,
+                "task_start": task_start,
+                "task_finish": task_finish,
+            }
+
+    return {
+        "success": False,
+        "stop_reason": "timeout",
+        "matched_event": None,
+        "server_event": None,
+        "task_start": task_start,
+        "task_finish": task_finish,
+    }
+
+
+def _extract_status_ship_name(server_event: dict[str, Any] | None) -> str | None:
+    if not isinstance(server_event, dict):
+        return None
+    payload = server_event.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    ship = payload.get("ship")
+    if not isinstance(ship, dict):
+        return None
+    ship_name = ship.get("ship_name")
+    return ship_name if isinstance(ship_name, str) else None
 
 
 async def _wait_for_owned_ship(
@@ -1898,6 +2470,63 @@ async def _wait_for_owned_ship(
             ship_id=ship_id,
             ship_name=None,
         ),
+    }
+
+
+async def _wait_for_status_ship_name(
+    bridge: HeadlessBridgeProcess,
+    *,
+    ship_name: str,
+    timeout: float,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError("session-rename-ship", "--event-timeout-seconds must be > 0")
+    if poll_interval_seconds <= 0:
+        raise HeadlessBridgeError(
+            "session-rename-ship",
+            "--poll-interval-seconds must be > 0",
+        )
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    polls = 0
+    poll_errors: list[str] = []
+    latest_status_event = None
+
+    wanted_ship_name = _normalize_compare_text(ship_name)
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        polls += 1
+        try:
+            status_result = await bridge.get_my_status(timeout=min(15.0, max(5.0, remaining)))
+        except HeadlessBridgeError as exc:
+            poll_errors.append(str(exc))
+        else:
+            latest_status_event = status_result.get("server_event")
+            if _normalize_compare_text(_extract_status_ship_name(latest_status_event)) == wanted_ship_name:
+                return {
+                    "success": True,
+                    "stop_reason": "ship_renamed",
+                    "polls": polls,
+                    "poll_errors": poll_errors,
+                    "matched_ship_name": _extract_status_ship_name(latest_status_event),
+                    "status": latest_status_event,
+                }
+
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(poll_interval_seconds, remaining))
+
+    return {
+        "success": False,
+        "stop_reason": "timeout",
+        "polls": polls,
+        "poll_errors": poll_errors,
+        "matched_ship_name": _extract_status_ship_name(latest_status_event),
+        "status": latest_status_event,
     }
 
 

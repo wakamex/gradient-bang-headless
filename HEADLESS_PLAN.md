@@ -24,6 +24,33 @@ The intent is not just to scaffold code, but to keep a running record of:
 5. Keep extending post-tutorial live-player surfaces from the website:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 
+## Current Milestones
+
+These are the explicit post-tutorial live-player goals that were set for the
+current push. Status is updated against production, not against local mocks.
+
+1. `[x]` Discover and accept any new live contracts visible to a normal player
+   after the two checked-in tutorial quest lines.
+   Current result: no new normal-player contract was exposed; the live bot now
+   consistently reports the tutorial lines as complete and no new contract path
+   has surfaced through the regular player UI.
+2. `[x]` Grow the corporation past the tutorial floor with at least one more
+   ship and a more useful fleet mix than "Kestrel plus two probes".
+   Current result: the corporation now has one `autonomous_light_hauler` and
+   one active `autonomous_probe`.
+3. `[x]` Reach one successful non-tutorial asset-acquisition loop end to end:
+   unowned ship collection or salvage collection.
+   Current result: salvage collection is proven live; unowned-ship collection
+   remains a live mismatch and is now tracked separately as a broken surface.
+4. `[x]` Reach first real combat and then first post-combat salvage collection.
+   Current result: live combat and live salvage collection are both proven.
+5. `[x]` Reach one complete garrison cycle: deploy, inspect/update mode, and
+   collect.
+6. `[x]` Upgrade the loop runner so it can stop on real post-tutorial business
+   goals such as fleet growth instead of only timing out after success.
+   Current result: the loop runner now stops successfully on corp-fleet targets
+   like `autonomous_light_hauler` count.
+
 ## Local Vs Live Constraint
 
 There are two different environments, but only one product target:
@@ -138,14 +165,15 @@ Diagnostic-only today:
 Current blocker:
 
 - the live player path is healthy through bootstrap, tutorials, corp setup,
-  corp ship purchase, and corp ship tasking
+  corp ship purchase, corp ship tasking, garrison work, combat, and salvage
 - the next blockers are surface-specific:
   - some bot-driven actions still need task-aware waiting, not fire-and-close prompts
   - the exact unowned-ship collect prompt currently routes to `salvage_collect`
     and fails with `404 Salvage not available` even when `status.snapshot`
     reports `unowned_ships` in the current sector
-  - the generic loop still has no fleet-growth target, so successful corp-ship
-    purchases can still end as `duration_elapsed`
+  - `corporation.data` can lag behind `ships.list` after a successful
+    corporation-ship task, so post-task verification should prefer `ships.list`
+    when sector freshness matters
 
 ### Current Live State
 
@@ -155,12 +183,13 @@ Latest live state observed through the session surface:
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
 - personal ship sector: `472`
-- personal ship credits: `471`
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `1908`
-- corp ship: `gbheadless Auto Probe 20260416-0312` (`autonomous_probe`) in sector `1695`
+- personal ship credits: `31`
+- corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `692`
+- destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- warp power: `500`
+- warp power: `290`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
 
@@ -169,14 +198,24 @@ Latest live progression proved:
 - created a fresh live account and completed the public bootstrap flow
 - completed the full starter tutorial and claimed all rewards
 - bought the first personal `Kestrel Courier`
+- proved a repeatable personal-ship NS trade route between sectors `472` and
+  `3358`
+- fixed player-task waiting so trade and purchase prompts bind to the correct
+  `task.start`/`task.finish` pair
 - accepted and completed the corporation tutorial contract
 - created a live corporation and purchased the first corporation probe
 - sent a first-class corp task to `gbheadless Auto Probe 1 [eab4cd]`
 - observed real `task.start` and `task.finish` for the corp probe
 - claimed the final corporation tutorial reward
-- purchased a second corporation probe beyond the tutorial
-- sent a first-class corp task to `gbheadless Auto Probe 20260416-0312 [3450da]`
-- observed real `task.start` and `task.finish` for that second post-tutorial fleet task
+- collected live salvage through a first-class headless command
+- engaged live combat and submitted a real `combat-action`
+- completed a full live garrison cycle: deploy, update, collect
+- purchased a first non-probe corporation ship, `gbheadless Auto Hauler 1`
+- proved the loop runner can stop on a real corp-fleet target
+- sent a first-class corp task to `gbheadless Auto Probe 1 [eab4cd]` and moved
+  it onward to sector `692`
+- verified that `ships.list` reflected the new probe sector immediately after
+  task finish, while `corporation.data` lagged
 - implemented the exact frontend unowned-ship prompt surface and reproduced a
   current live failure mode against real unowned-ship IDs at sector `472`
 
@@ -186,6 +225,12 @@ Interpretation:
 - the next bottleneck is no longer tutorial progression
 - the remaining work is expanding reliable post-tutorial surfaces and
   documenting which website actions still degrade when driven headlessly
+- the next concrete live-game push is now:
+  - fund and task the new auto hauler
+  - keep probing for new live contract surfaces through exploration and the
+    regular player session
+  - either make unowned-ship collection work or document it as a live bot/path
+    bug with clear reproduction
 
 ## User-Facing Surface Tracking
 
@@ -202,8 +247,8 @@ website parity, not direct coverage of every server endpoint.
 Current first-class regular-player coverage:
 
 - tracked user-facing surfaces: `35`
-- first-class implemented in this client: `24`
-- coverage: about `69%`
+- first-class implemented in this client: `29`
+- coverage: about `83%`
 
 ### Public Bootstrap And Control Plane (`7/7`)
 
@@ -215,7 +260,7 @@ Current first-class regular-player coverage:
 - `[x]` start session via `/start`
 - `[x]` leaderboard resources read
 
-### Frontend Semantic Session Actions (`12/19`)
+### Frontend Semantic Session Actions (`13/19`)
 
 Implemented:
 
@@ -231,6 +276,7 @@ Implemented:
 - `[x]` `get-chat-history`
 - `[x]` `assign-quest`
 - `[x]` `claim-step-reward`
+- `[x]` `combat-action`
 
 Headless convenience wrappers, not counted separately:
 
@@ -246,7 +292,7 @@ Not first-class yet:
 - `[ ]` `set-voice`
 - `[ ]` `set-personality`
 
-### Frontend Prompt-Driven Surfaces (`5/9`)
+### Frontend Prompt-Driven Surfaces (`9/9`)
 
 Implemented:
 
@@ -255,20 +301,18 @@ Implemented:
 - `[x]` personal ship purchase prompt contract from `ShipDetails.tsx`
 - `[x]` corporation ship purchase prompt contract from `ShipDetails.tsx`
 - `[x]` collect unowned ship prompt contract from `SectorUnownedSubPanel.tsx`
-
-Not first-class yet:
-
-- `[ ]` engage combat with named player
-- `[ ]` garrison update prompt contract
-- `[ ]` collect salvage prompt contract
-- `[ ]` rename ship prompt contract
+- `[x]` engage combat with named player
+- `[x]` garrison update prompt contract
+- `[x]` collect salvage prompt contract
+- `[x]` rename ship prompt contract
 
 Interpretation:
 
 - the public bootstrap flow is fully covered
 - the typed session surface is mostly covered
-- the biggest remaining gap is prompt-driven gameplay control, especially
-  combat, salvage, garrison management, renaming, and long-running trade loops
+- the biggest remaining gap is not prompt coverage anymore; it is the set of
+  live prompt paths that still degrade or misroute in production, such as
+  unowned-ship collection
 - generic `session-user-text` can still reach more of the live game than the
   first-class count shows, but it is not counted as durable surface coverage
   unless the website contract has been written into the client
