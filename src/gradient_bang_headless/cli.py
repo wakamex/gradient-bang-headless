@@ -7,7 +7,7 @@ import os
 import re
 import sys
 from collections import deque
-from typing import Any
+from typing import Any, Sequence
 
 from .config import HeadlessConfig, repo_root, update_dotenv
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
@@ -2228,6 +2228,15 @@ async def dispatch(args: argparse.Namespace) -> int:
             initial_corporation = await bridge.get_my_corporation(
                 timeout=min(args.event_timeout_seconds, 15.0),
             )
+            purchase_context_summary: dict[str, Any] = {}
+            try:
+                purchase_context = await _fetch_status_snapshot(
+                    bridge,
+                    timeout=min(args.event_timeout_seconds, 15.0),
+                )
+                purchase_context_summary = purchase_context.get("summary") or {}
+            except HeadlessBridgeError:
+                purchase_context_summary = {}
             known_ship_ids = _corporation_ship_id_set(initial_corporation)
             purchases: list[dict[str, Any]] = []
             watch_result = None
@@ -2236,6 +2245,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                     prompt,
                     wait_seconds=args.wait_seconds,
                 )
+                action_bot_outputs: list[str] = []
                 purchase_result: dict[str, Any] = {
                     "purchase_index": purchase_index + 1,
                     "prompt": prompt,
@@ -2254,6 +2264,76 @@ async def dispatch(args: argparse.Namespace) -> int:
                             ship_id for ship_id in new_ship_ids if isinstance(ship_id, str) and ship_id
                         )
                     if not watch_result.get("success"):
+                        post_watch_events = await bridge.drain_events()
+                        post_watch_bot_outputs = _collect_bot_output_texts(post_watch_events)
+                        combined_bot_outputs = [*action_bot_outputs, *post_watch_bot_outputs]
+                        if combined_bot_outputs:
+                            purchase_result["bot_outputs"] = combined_bot_outputs
+                        repair_steps: list[dict[str, Any]] = []
+                        attempted_repairs: set[str] = set()
+                        current_bot_outputs = combined_bot_outputs
+                        purchase_completed = False
+                        while current_bot_outputs:
+                            repair_kind: str | None = None
+                            repair_prompt: str | None = None
+                            if (
+                                _purchase_confirmation_requested(current_bot_outputs)
+                                and "confirmation" not in attempted_repairs
+                            ):
+                                repair_kind = "confirmation"
+                                repair_prompt = "Yes, proceed with the purchase at my current location."
+                            elif (
+                                _purchase_funding_clarification_requested(current_bot_outputs)
+                                and "funding_clarification" not in attempted_repairs
+                            ):
+                                repair_kind = "funding_clarification"
+                                repair_prompt = _build_corporation_purchase_funding_clarification_prompt(
+                                    ship_display_name=args.ship_display_name,
+                                    ship_credits=purchase_context_summary.get("ship_credits"),
+                                    sector_id=purchase_context_summary.get("sector_id"),
+                                )
+                            if repair_kind is None or repair_prompt is None:
+                                break
+                            attempted_repairs.add(repair_kind)
+                            repair_result = await bridge.user_text_input(
+                                repair_prompt,
+                                wait_seconds=args.wait_seconds,
+                            )
+                            repair_events = await bridge.drain_events()
+                            repair_bot_outputs = _collect_bot_output_texts(repair_events)
+                            repair_step: dict[str, Any] = {
+                                "kind": repair_kind,
+                                "prompt": repair_prompt,
+                                "result": repair_result,
+                            }
+                            if repair_bot_outputs:
+                                repair_step["bot_outputs"] = repair_bot_outputs
+                            repair_watch = await _watch_corporation_ship_purchase(
+                                bridge,
+                                known_ship_ids=known_ship_ids,
+                                timeout=args.event_timeout_seconds,
+                            )
+                            repair_step["watch"] = repair_watch
+                            watch_result = repair_watch
+                            new_ship_ids = repair_watch.get("new_ship_ids") or []
+                            if new_ship_ids:
+                                known_ship_ids.update(
+                                    ship_id for ship_id in new_ship_ids if isinstance(ship_id, str) and ship_id
+                                )
+                            repair_steps.append(repair_step)
+                            if repair_watch.get("success"):
+                                purchase_completed = True
+                                break
+                            post_repair_events = await bridge.drain_events()
+                            post_repair_bot_outputs = _collect_bot_output_texts(post_repair_events)
+                            if post_repair_bot_outputs:
+                                repair_step["post_watch_bot_outputs"] = post_repair_bot_outputs
+                            current_bot_outputs = [*repair_bot_outputs, *post_repair_bot_outputs]
+                        if repair_steps:
+                            purchase_result["repair_steps"] = repair_steps
+                        if purchase_completed:
+                            purchases.append(purchase_result)
+                            continue
                         purchases.append(purchase_result)
                         break
                 purchases.append(purchase_result)
@@ -2357,6 +2437,8 @@ async def dispatch(args: argparse.Namespace) -> int:
                 ship_id=args.ship_id,
                 ship_name=args.ship_name,
                 start_sector=args.start_sector,
+                preferred_target_sector=None,
+                preferred_path=None,
                 new_sectors_per_run=args.new_sectors_per_run,
                 max_runs=args.max_runs,
                 target_known_sectors=args.target_known_sectors,
@@ -3262,6 +3344,80 @@ def _extract_status_snapshot(server_event: dict[str, Any] | None) -> dict[str, A
     return payload if isinstance(payload, dict) else None
 
 
+def _collect_bot_output_texts(events: Sequence[dict[str, Any]] | None) -> list[str]:
+    if not isinstance(events, Sequence):
+        return []
+    texts: list[str] = []
+    for event in events:
+        if not isinstance(event, dict) or event.get("event") != "bot_output":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        text = data.get("text")
+        if isinstance(text, str) and text.strip():
+            texts.append(text.strip())
+    return texts
+
+
+def _purchase_confirmation_requested(bot_texts: Sequence[str] | None) -> bool:
+    if not isinstance(bot_texts, Sequence):
+        return False
+    for text in bot_texts:
+        if not isinstance(text, str):
+            continue
+        normalized = text.strip().lower()
+        if "would you like to proceed" in normalized:
+            return True
+        if "would you like me to proceed" in normalized:
+            return True
+        if "proceed with a new purchase" in normalized:
+            return True
+        if "would you like" in normalized and "proceed" in normalized:
+            return True
+    return False
+
+
+def _purchase_funding_clarification_requested(bot_texts: Sequence[str] | None) -> bool:
+    if not isinstance(bot_texts, Sequence):
+        return False
+    markers = (
+        "corporation funds",
+        "available corporation funds",
+        "corporation treasury",
+        "corp currently has only",
+        "must be paid from available corporation funds",
+    )
+    for text in bot_texts:
+        if not isinstance(text, str):
+            continue
+        normalized = text.strip().lower()
+        if any(marker in normalized for marker in markers):
+            return True
+    return False
+
+
+def _build_corporation_purchase_funding_clarification_prompt(
+    *,
+    ship_display_name: str,
+    ship_credits: int | None = None,
+    sector_id: int | None = None,
+) -> str:
+    display_name = ship_display_name.strip()
+    if not display_name:
+        raise ValueError("ship_display_name is required")
+    location_context = ""
+    if isinstance(sector_id, int) and sector_id > 0:
+        location_context = f" I am already at mega-port sector {sector_id}."
+    credit_context = ""
+    if isinstance(ship_credits, int) and ship_credits >= 0:
+        credit_context = f" My current ship has {ship_credits} credits on hand."
+    return (
+        f"Use my current ship's on-hand credits for this purchase.{credit_context}"
+        f"{location_context} Please buy a new {display_name} as a new corporation ship now."
+    )
+
+
 def _status_snapshot_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
@@ -3995,6 +4151,7 @@ async def _run_move_to_sector(
             prompt=prompt,
             timeout=timeout,
             retries=retries,
+            status_timeout_cap=None,
             validate=lambda summary: summary.get("sector_id") == sector_id,
         )
         final_attempt = step_result.get("result")
@@ -4656,6 +4813,7 @@ async def _run_validated_player_step(
     prompt: str,
     timeout: float,
     retries: int,
+    status_timeout_cap: float | None = 30.0,
     validate,
 ) -> dict[str, Any]:
     attempts: list[dict[str, Any]] = []
@@ -4668,9 +4826,10 @@ async def _run_validated_player_step(
             timeout=watch_timeout,
         )
         deadline = asyncio.get_running_loop().time() + max(0.0, timeout - watch_timeout)
+        initial_status_timeout = timeout if status_timeout_cap is None else min(timeout, status_timeout_cap)
         status_result = await _fetch_status_snapshot_with_retries(
             bridge,
-            timeout=min(timeout, 30.0),
+            timeout=initial_status_timeout,
             context="session-move-to-sector",
         )
         status_polls: list[dict[str, Any]] = []
@@ -4684,9 +4843,10 @@ async def _run_validated_player_step(
             if remaining <= 0:
                 break
             await asyncio.sleep(min(2.0, remaining))
+            poll_status_timeout = remaining if status_timeout_cap is None else min(remaining, status_timeout_cap)
             status_result = await _fetch_status_snapshot_with_retries(
                 bridge,
-                timeout=min(remaining, 30.0),
+                timeout=poll_status_timeout,
                 context="session-move-to-sector",
             )
             summary = status_result["summary"]
@@ -5324,6 +5484,61 @@ def _actionable_frontier_candidates(summary: dict[str, Any]) -> list[dict[str, A
     return rows
 
 
+def _frontier_candidate_start_sector(candidate: dict[str, Any]) -> int | None:
+    if not isinstance(candidate, dict):
+        return None
+    sector_id = _coerce_int(candidate.get("sector_id"))
+    if candidate.get("visited") is True and sector_id > 0:
+        return sector_id
+    path = candidate.get("path")
+    if isinstance(path, list):
+        path_ids = [_coerce_int(value) for value in path]
+        path_ids = [value for value in path_ids if value > 0]
+        if len(path_ids) >= 2:
+            return path_ids[-2]
+    return sector_id if sector_id > 0 else None
+
+
+def _frontier_candidate_target_sector(candidate: dict[str, Any]) -> int | None:
+    if not isinstance(candidate, dict):
+        return None
+    sector_id = _coerce_int(candidate.get("sector_id"))
+    if candidate.get("visited") is not True and sector_id > 0:
+        return sector_id
+
+    validated_stub_neighbors = candidate.get("validated_stub_neighbors")
+    if isinstance(validated_stub_neighbors, list):
+        for stub in validated_stub_neighbors:
+            if not isinstance(stub, dict):
+                continue
+            if stub.get("status") == "not_centerable":
+                stub_sector = _coerce_int(stub.get("sector_id"))
+                if stub_sector > 0:
+                    return stub_sector
+
+    unvisited_neighbors = candidate.get("unvisited_neighbors")
+    if isinstance(unvisited_neighbors, list):
+        for neighbor in unvisited_neighbors:
+            neighbor_sector = _coerce_int(neighbor)
+            if neighbor_sector > 0:
+                return neighbor_sector
+    return None
+
+
+def _frontier_candidate_preferred_path(candidate: dict[str, Any], *, start_sector: int | None) -> list[int] | None:
+    if not isinstance(candidate, dict):
+        return None
+    path = candidate.get("path")
+    if not isinstance(path, list):
+        return None
+    path_ids = [_coerce_int(value) for value in path]
+    path_ids = [value for value in path_ids if value > 0]
+    if start_sector is not None:
+        while path_ids and path_ids[0] != start_sector:
+            path_ids.pop(0)
+    return path_ids or None
+
+
 def _probe_ship_summary(ship: dict[str, Any]) -> dict[str, Any]:
     return {
         "ship_id": ship.get("ship_id"),
@@ -5741,11 +5956,29 @@ async def _run_probe_frontier_loop(
     stop_reason = "max_frontiers_exhausted"
     selected_frontiers = frontier_candidates[:max_frontiers]
     for frontier_candidate in selected_frontiers:
+        start_sector = _frontier_candidate_start_sector(frontier_candidate)
+        if start_sector is None:
+            attempts.append(
+                {
+                    "frontier_candidate": frontier_candidate,
+                    "start_sector": None,
+                    "branch_progress": False,
+                    "error": "could not determine a visited staging sector for the frontier candidate",
+                }
+            )
+            continue
+        preferred_target_sector = _frontier_candidate_target_sector(frontier_candidate)
+        preferred_path = _frontier_candidate_preferred_path(
+            frontier_candidate,
+            start_sector=start_sector,
+        )
         explore_result = await _run_corporation_explore_loop(
             bridge,
             ship_id=ship_id,
             ship_name=ship_name,
-            start_sector=_coerce_int(frontier_candidate.get("sector_id")) or None,
+            start_sector=start_sector,
+            preferred_target_sector=preferred_target_sector,
+            preferred_path=preferred_path,
             new_sectors_per_run=new_sectors_per_run,
             max_runs=1,
             target_known_sectors=None,
@@ -5787,6 +6020,9 @@ async def _run_probe_frontier_loop(
         )
         attempt = {
             "frontier_candidate": frontier_candidate,
+            "start_sector": start_sector,
+            "preferred_target_sector": preferred_target_sector,
+            "preferred_path": preferred_path,
             "explore_result": explore_result,
             "delta_known_sectors_total": delta_known,
             "delta_corp_sectors_total": delta_corp,
@@ -6375,6 +6611,8 @@ async def _run_corporation_explore_loop(
     ship_id: str | None,
     ship_name: str,
     start_sector: int | None,
+    preferred_target_sector: int | None,
+    preferred_path: list[int] | None,
     new_sectors_per_run: int,
     max_runs: int | None,
     target_known_sectors: int | None,
@@ -6394,7 +6632,12 @@ async def _run_corporation_explore_loop(
     if timeout <= 0:
         raise HeadlessBridgeError("session-corp-explore-loop", "--event-timeout-seconds must be > 0")
 
-    task_description = build_corporation_ship_explore_task_description(new_sectors=new_sectors_per_run)
+    task_description = build_corporation_ship_explore_task_description(
+        new_sectors=new_sectors_per_run,
+        start_sector=start_sector,
+        preferred_target_sector=preferred_target_sector,
+        preferred_path=preferred_path,
+    )
     initial_status = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
     initial_ship = await _fetch_owned_ship_snapshot(
         bridge,

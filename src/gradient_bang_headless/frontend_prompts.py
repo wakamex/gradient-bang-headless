@@ -197,13 +197,44 @@ def build_corporation_ship_task_prompt(
     return f"Have my corporation ship {ship_ref} {normalized_task_description}"
 
 
-def build_corporation_ship_explore_task_description(*, new_sectors: int) -> str:
+def build_corporation_ship_explore_task_description(
+    *,
+    new_sectors: int,
+    start_sector: int | None = None,
+    preferred_target_sector: int | None = None,
+    preferred_path: list[int] | None = None,
+) -> str:
     if new_sectors <= 0:
         raise ValueError("new_sectors must be > 0")
-    return (
-        f"explore at least {new_sectors} new sectors from your current position, "
-        "then stop and report final sector and remaining warp"
+    if start_sector is not None and start_sector <= 0:
+        raise ValueError("start_sector must be > 0 when provided")
+    if preferred_target_sector is not None and preferred_target_sector <= 0:
+        raise ValueError("preferred_target_sector must be > 0 when provided")
+
+    normalized_path: list[int] = []
+    if preferred_path is not None:
+        normalized_path = [sector for sector in preferred_path if isinstance(sector, int) and sector > 0]
+
+    parts = []
+    if start_sector is not None:
+        parts.append(f"move to visited frontier sector {start_sector} first")
+    else:
+        parts.append("move to a visited frontier sector first")
+
+    if preferred_target_sector is not None:
+        branch_hint = f"then push through the frontier branch toward sector {preferred_target_sector}"
+        if normalized_path:
+            branch_hint += f" using this known approach if possible: {' -> '.join(str(sector) for sector in normalized_path)}"
+        parts.append(branch_hint)
+
+    parts.append(
+        f"then explore at least {new_sectors} new sectors from your current position"
     )
+    parts.append(
+        "only use visited sectors as local map centers while planning and probing"
+    )
+    parts.append("then stop and report final sector and remaining warp")
+    return ", ".join(parts)
 
 
 def build_corporation_ship_move_to_sector_task_description(*, sector_id: int) -> str:
