@@ -24,6 +24,7 @@ This scaffold supports:
 - a first-class `session-trade-opportunities` helper that ranks the current known-port graph
 - a first-class `session-auto-trade-loop` that picks a route for `wealth`, `trading`, or raw `profit`
 - a first-class `session-wealth-loadout` helper that buys the cheapest legal full hold at the current port to maximize immediate wealth-board value
+- a first-class `session-liquidate-cargo` helper that routes the current hold to a legal buyer and exact-sells it
 - a first-class `session-move-to-sector` helper for segmented exact movement with status recovery
 - a first-class `session-corp-move-to-sector` helper for repeated partial corporation-ship moves toward a target sector
 - a first-class `session-nearest-mega-port` helper for recharge-route discovery
@@ -149,6 +150,10 @@ gb-headless session-trade-order \
 gb-headless session-wealth-loadout \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-liquidate-cargo \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --goal best-price
 gb-headless session-purchase-ship \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -290,7 +295,8 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   freeform objective, retries transient step failures, and now places exact
   frontend-style trade orders when live price/quantity data is available.
   Short explicit batches are currently more trustworthy than one very large
-  unattended run.
+  unattended run, and very long batches can make real live progress while
+  still failing to return a clean final result object.
 - `session-nearest-mega-port` is the preferred recharge-planning helper. It
   uses the live session map graph and returns real shortest paths to known
   mega-ports.
@@ -306,6 +312,10 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   inspects the current port, picks the cheapest commodity the port legally
   sells, buys the largest affordable full hold, and waits for the resulting
   player-ship task to finish.
+- `session-liquidate-cargo` is the preferred route-reset helper when the ship
+  is already carrying cargo and the next step is to unwind that hold cleanly.
+  It infers the loaded commodity, ranks legal buyers from the known-port graph,
+  moves to the selected buyer, and finishes with an exact sell order.
 - `session-auto-trade-loop` is the preferred execution surface once a goal is
   clear. It uses `session-trade-opportunities` internally, picks the current
   best visible route for `wealth`, `trading`, or raw `profit`, then runs the

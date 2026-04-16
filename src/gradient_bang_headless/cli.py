@@ -463,6 +463,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     session_trade_order.add_argument("--event-timeout-seconds", type=float, default=45.0)
 
+    session_liquidate_cargo = sub.add_parser(
+        "session-liquidate-cargo",
+        help="Connect a session, route to a legal buyer for the current cargo, and liquidate it with an exact sell order",
+    )
+    _add_session_connect_args(session_liquidate_cargo)
+    session_liquidate_cargo.add_argument(
+        "--commodity",
+        choices=["quantum_foam", "retro_organics", "neuro_symbolics"],
+        help="Cargo commodity to liquidate; defaults to inferring the only loaded commodity",
+    )
+    session_liquidate_cargo.add_argument(
+        "--goal",
+        choices=["nearest", "best-price", "best-price-per-hop"],
+        default="best-price-per-hop",
+    )
+    session_liquidate_cargo.add_argument("--step-retries", type=int, default=1)
+    session_liquidate_cargo.add_argument("--max-segments", type=int, default=8)
+    session_liquidate_cargo.add_argument("--map-max-hops", type=int, default=20)
+    session_liquidate_cargo.add_argument("--map-max-sectors", type=int, default=500)
+    session_liquidate_cargo.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
     session_wealth_loadout = sub.add_parser(
         "session-wealth-loadout",
         help="Connect a session and buy the cheapest currently sellable cargo to maximize immediate leaderboard wealth",
@@ -1739,6 +1760,31 @@ async def dispatch(args: argparse.Namespace) -> int:
                         "prompt": prompt,
                         "result": action_result,
                         "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-liquidate-cargo":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_liquidate_cargo(
+                bridge,
+                commodity=args.commodity,
+                goal=args.goal,
+                retries=args.step_retries,
+                max_segments=args.max_segments,
+                map_max_hops=args.map_max_hops,
+                map_max_sectors=args.map_max_sectors,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -3370,6 +3416,133 @@ def _select_wealth_loadout(summary: dict[str, Any]) -> dict[str, Any]:
     return choices[0]
 
 
+def _select_loaded_commodity(summary: dict[str, Any], preferred: str | None) -> dict[str, Any]:
+    cargo = summary.get("cargo")
+    if not isinstance(cargo, dict):
+        raise HeadlessBridgeError("session-liquidate-cargo", "ship cargo is unavailable")
+
+    if preferred is not None:
+        units = _cargo_units(summary, preferred)
+        if units <= 0:
+            raise HeadlessBridgeError(
+                "session-liquidate-cargo",
+                f"ship is not carrying any {preferred}",
+                payload={"summary": summary},
+            )
+        return {
+            "commodity": preferred,
+            "quantity": units,
+        }
+
+    loaded = [
+        {
+            "commodity": commodity,
+            "quantity": _cargo_units(summary, commodity),
+        }
+        for commodity in RESOURCE_PORT_CODE_ORDER
+        if _cargo_units(summary, commodity) > 0
+    ]
+    if not loaded:
+        raise HeadlessBridgeError("session-liquidate-cargo", "ship is not carrying any cargo")
+    if len(loaded) > 1:
+        raise HeadlessBridgeError(
+            "session-liquidate-cargo",
+            "ship is carrying multiple commodities; pass --commodity to choose one",
+            payload={"loaded": loaded, "summary": summary},
+        )
+    return loaded[0]
+
+
+def _rank_cargo_sale_opportunities(
+    *,
+    status_result: dict[str, Any],
+    ports_result: dict[str, Any],
+    map_result: dict[str, Any] | None,
+    commodity: str,
+    quantity: int,
+) -> dict[str, Any]:
+    if quantity <= 0:
+        raise HeadlessBridgeError("session-liquidate-cargo", "quantity must be > 0")
+
+    status_payload = _extract_bridge_payload(status_result)
+    ports_payload = _extract_bridge_payload(ports_result)
+    map_payload = _extract_bridge_payload(map_result or {})
+
+    sector = status_payload.get("sector") if isinstance(status_payload, dict) else None
+    ports = ports_payload.get("ports") if isinstance(ports_payload, dict) else None
+    graph = _map_graph_from_payload(map_payload)
+    current_sector = _coerce_int(sector.get("id")) if isinstance(sector, dict) else 0
+    distances_from_current = _shortest_path_lengths(graph, start=current_sector) if current_sector > 0 else {}
+
+    rows: list[dict[str, Any]] = []
+    if isinstance(ports, list):
+        for port in ports:
+            if not isinstance(port, dict):
+                continue
+            port_sector = port.get("sector")
+            if not isinstance(port_sector, dict):
+                continue
+            port_info = port_sector.get("port")
+            if not isinstance(port_info, dict):
+                continue
+            port_code = port_info.get("code")
+            if not _port_allows_sell(str(port_code), commodity):
+                continue
+            prices = port_info.get("prices")
+            if not isinstance(prices, dict):
+                continue
+            sell_price = _coerce_int(prices.get(commodity))
+            if sell_price <= 0:
+                continue
+            sector_id = _coerce_int(port_sector.get("id"))
+            if sector_id <= 0:
+                continue
+            distance = distances_from_current.get(sector_id, _coerce_int(port.get("hops_from_start")))
+            sale_value = sell_price * quantity
+            rows.append(
+                {
+                    "commodity": commodity,
+                    "quantity": quantity,
+                    "sell_sector": sector_id,
+                    "sell_port_code": port_code,
+                    "sell_price": sell_price,
+                    "expected_sale_value": sale_value,
+                    "distance_to_sell": distance,
+                    "sale_value_per_hop": round(sale_value / max(distance, 1), 2),
+                }
+            )
+
+    rows.sort(
+        key=lambda row: (
+            row["sale_value_per_hop"],
+            row["sell_price"],
+            -row["distance_to_sell"],
+        ),
+        reverse=True,
+    )
+    return {
+        "current_sector": current_sector or None,
+        "commodity": commodity,
+        "quantity": quantity,
+        "nearest": min(rows, key=lambda row: (row["distance_to_sell"], -row["sell_price"]), default=None),
+        "best_by_price": max(rows, key=lambda row: row["sell_price"], default=None),
+        "best_by_price_per_hop": max(rows, key=lambda row: row["sale_value_per_hop"], default=None),
+        "opportunities": rows,
+    }
+
+
+def _select_cargo_sale_opportunity(summary: dict[str, Any], goal: str) -> dict[str, Any] | None:
+    if not isinstance(summary, dict):
+        return None
+    if goal == "nearest":
+        selected = summary.get("nearest")
+    elif goal == "best-price":
+        selected = summary.get("best_by_price")
+    else:
+        selected = summary.get("best_by_price_per_hop")
+    return selected if isinstance(selected, dict) else None
+
+
 async def _run_wealth_loadout(
     bridge: HeadlessBridgeProcess,
     *,
@@ -3410,6 +3583,136 @@ async def _run_wealth_loadout(
         "result": action_result,
         "watch": watch_result,
         "final_status": final_status,
+    }
+
+
+async def _run_liquidate_cargo(
+    bridge: HeadlessBridgeProcess,
+    *,
+    commodity: str | None,
+    goal: str,
+    retries: int,
+    max_segments: int,
+    map_max_hops: int,
+    map_max_sectors: int,
+    timeout: float,
+) -> dict[str, Any]:
+    initial_status = await _fetch_status_snapshot_with_retries(
+        bridge,
+        timeout=min(timeout, 30.0),
+        context="session-liquidate-cargo",
+    )
+    initial_summary = initial_status["summary"]
+    loaded = _select_loaded_commodity(initial_summary, commodity)
+    loaded_commodity = loaded["commodity"]
+    loaded_quantity = loaded["quantity"]
+
+    current_sector = _coerce_int(initial_summary.get("sector_id"))
+    current_price = _port_price(initial_summary, loaded_commodity)
+    selected: dict[str, Any] | None = None
+    opportunities: dict[str, Any] | None = None
+    if (
+        current_sector > 0
+        and _port_allows_sell(str(initial_summary.get("port_code")), loaded_commodity)
+        and isinstance(current_price, int)
+        and current_price > 0
+    ):
+        selected = {
+            "commodity": loaded_commodity,
+            "quantity": loaded_quantity,
+            "sell_sector": current_sector,
+            "sell_port_code": initial_summary.get("port_code"),
+            "sell_price": current_price,
+            "expected_sale_value": current_price * loaded_quantity,
+            "distance_to_sell": 0,
+            "sale_value_per_hop": current_price * loaded_quantity,
+        }
+    else:
+        ports_result = await bridge.get_known_ports(timeout=timeout)
+        map_result = await bridge.get_my_map(
+            center_sector=current_sector,
+            max_hops=map_max_hops,
+            max_sectors=map_max_sectors,
+            timeout=timeout,
+        )
+        opportunities = _rank_cargo_sale_opportunities(
+            status_result=initial_status,
+            ports_result=ports_result,
+            map_result=map_result,
+            commodity=loaded_commodity,
+            quantity=loaded_quantity,
+        )
+        selected = _select_cargo_sale_opportunity(opportunities, goal)
+        if not isinstance(selected, dict):
+            raise HeadlessBridgeError(
+                "session-liquidate-cargo",
+                f"no reachable legal buyer for {loaded_commodity}",
+                payload=opportunities,
+            )
+
+    move_result = None
+    current_status = initial_status
+    current_summary = initial_summary
+    sell_sector = _coerce_int(selected.get("sell_sector"))
+    if sell_sector > 0 and current_summary.get("sector_id") != sell_sector:
+        move_result = await _run_move_to_sector(
+            bridge,
+            sector_id=sell_sector,
+            prompt=build_move_to_sector_prompt(sector_id=sell_sector),
+            retries=retries,
+            max_segments=max_segments,
+            timeout=timeout,
+        )
+        current_status = move_result.get("final_status", current_status)
+        current_summary = current_status.get("summary", current_summary) if isinstance(current_status, dict) else current_summary
+        if current_summary.get("sector_id") != sell_sector:
+            return {
+                "commodity": loaded_commodity,
+                "quantity": loaded_quantity,
+                "goal": goal,
+                "selected_route": selected,
+                "opportunities": opportunities,
+                "initial_status": initial_status,
+                "move": move_result,
+                "stop_reason": "move_failed",
+                "final_status": current_status,
+            }
+
+    current_quantity = _cargo_units(current_summary, loaded_commodity)
+    if current_quantity <= 0:
+        return {
+            "commodity": loaded_commodity,
+            "quantity": loaded_quantity,
+            "goal": goal,
+            "selected_route": selected,
+            "opportunities": opportunities,
+            "initial_status": initial_status,
+            "move": move_result,
+            "stop_reason": "already_liquidated",
+            "final_status": current_status,
+        }
+
+    recovery_result = await _recover_with_trade_order(
+        bridge,
+        summary=current_summary,
+        commodity=loaded_commodity,
+        timeout=timeout,
+    )
+    final_status = recovery_result.get("status", current_status)
+    final_summary = final_status.get("summary", current_summary) if isinstance(final_status, dict) else current_summary
+    stop_reason = "liquidated" if recovery_result.get("success") else "sell_failed"
+    return {
+        "commodity": loaded_commodity,
+        "quantity": loaded_quantity,
+        "goal": goal,
+        "selected_route": selected,
+        "opportunities": opportunities,
+        "initial_status": initial_status,
+        "move": move_result,
+        "sell": recovery_result,
+        "stop_reason": stop_reason,
+        "final_status": final_status,
+        "final_summary": final_summary,
     }
 
 
