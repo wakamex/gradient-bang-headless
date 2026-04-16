@@ -23,6 +23,8 @@ This scaffold supports:
 - first-class live session reads for status, ports, map, chat history, ship lists, ship definitions, corporation data, task events, and quest status
 - a first-class `session-trade-opportunities` helper that ranks the current known-port graph
 - a first-class `session-auto-trade-loop` that picks a route for `wealth`, `trading`, or raw `profit`
+- a first-class `session-move-to-sector` helper for exact move-and-validate execution
+- a first-class `session-nearest-mega-port` helper for recharge-route discovery
 - exact frontend prompt contracts for trade orders and ship purchase requests
 - first-class logistics helpers for warp recharge and credit transfers
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
@@ -107,6 +109,9 @@ gb-headless session-status \
 gb-headless session-known-ports \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-nearest-mega-port \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
 gb-headless session-trade-opportunities \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -181,6 +186,10 @@ gb-headless session-player-task \
   --access-token "$GB_ACCESS_TOKEN" \
   --task-description 'Move to sector 1908, buy as much retro organics as possible there, return to sector 3358, sell all retro organics, then stop and report final credits and sector.' \
   --wait-for-finish
+gb-headless session-move-to-sector \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --sector-id 3246
 gb-headless session-recharge-warp \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -221,7 +230,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `quest-status`, `quest-assign`, and `quest-claim-reward` are the preferred
   trusted gameplay commands over raw `game-call`.
 - `session-status`, `session-known-ports`, `session-task-history`,
-  `session-trade-opportunities`,
+  `session-nearest-mega-port`, `session-trade-opportunities`,
   `session-task-events`, `session-map`, `session-chat-history`,
   `session-ships`, `session-ship-definitions`, `session-corporation`,
   `session-quest-status`, `session-assign-quest`, `session-claim-reward`,
@@ -243,28 +252,34 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-player-task` does the same for the personal ship. It is the
   preferred surface for short deterministic bot-driven objectives like
   single-route trade loops or move-and-sell steps.
+- `session-move-to-sector` is the preferred exact movement wrapper when you
+  want a deterministic relocate-and-stop action without writing freeform task text.
 - `session-recharge-warp` and `session-transfer-credits` are first-class
   wrappers around regular-player logistics prompts that were proven live.
 - `session-trade-route-loop` is the preferred surface for repeatable personal
   trade grinding. It uses bounded watched tasks rather than one broad
   freeform objective, retries transient step failures, and now places exact
   frontend-style trade orders when live price/quantity data is available.
+- `session-nearest-mega-port` is the preferred recharge-planning helper. It
+  uses the live session map graph and returns real shortest paths to known
+  mega-ports.
 - `session-trade-opportunities` is the preferred decision surface before
   picking a route. It reads current ship state plus the known-port graph and
   ranks visible routes by raw profit, profit per hop, and trade volume per hop.
   It now uses the session map graph for real shortest-path distances instead of
-  estimating inter-port distance from hop deltas alone.
+  estimating inter-port distance from hop deltas alone, and it now respects
+  port `B`/`S` directionality plus live buy-side stock so invalid routes do
+  not get promoted just because the posted prices look attractive.
 - `session-auto-trade-loop` is the preferred execution surface once a goal is
   clear. It uses `session-trade-opportunities` internally, picks the current
   best visible route for `wealth`, `trading`, or raw `profit`, then runs the
   deterministic trade loop on that route.
-- when the deterministic route loop reaches the sell edge case, it now makes a
-  final exact trade-order sell attempt before giving up. That recovery path has
-  been proven live and now counts as a completed cycle when it finishes the job.
-- the exact trade-order surface is stronger than the older `sell all` phrasing.
-  In live play, `session-trade-order --trade-type sell --quantity 9
-  --commodity neuro_symbolics --price-per-unit 40` successfully routed the
-  ship to a better market and sold at `45`, not just the requested floor.
+- the route loop now also refuses invalid buy/sell ports before prompting, so
+  bad routes stop early instead of silently stalling on impossible trades.
+- the exact trade-order surface is strongest once the ship is already on a
+  valid port for that commodity. In live play, exact orders worked reliably at
+  valid `BBB` buyers after the ranker stopped sending the ship to illegal `SSS`
+  sell targets.
 - session commands now also harden auth for long-running play:
   if `/start` returns `401` on the default credential path, the client logs in
   again once and retries the connect automatically.

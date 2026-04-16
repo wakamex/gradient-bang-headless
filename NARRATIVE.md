@@ -11,26 +11,26 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `3236`
-- Personal ship credits: `6,739`
-- Personal ship warp: `23/500`
+- Personal ship sector: `3246`
+- Personal ship credits: `7,129`
+- Personal ship warp: `11/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) currently observed in sector `1187`
+  - `gbheadless Auto Probe 1` (`autonomous_probe`) currently observed in sector `2419` with an active exploration task
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `272` known sectors, currently observed at rank `39`
-  - wealth: on the visible board, currently observed at rank `79`
-  - trading: on the visible board, currently observed at rank `29` with `208,658` total trade volume across `218` trades
+  - exploration: on the visible board at `295` known sectors, currently observed at rank `37`
+  - wealth: on the visible board, currently observed at rank `79` with estimated wealth `38,229`
+  - trading: on the visible board, currently observed at rank `29` with `212,648` total trade volume across `222` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
 - Current frontier:
   - keep all three leaderboard categories visible while climbing deeper into each board
   - use repeated corporation-probe frontier loops as the primary exploration engine
-  - use map-backed route selection instead of hop-delta guesses
-  - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route
-  - treat exact price-constrained sell orders as the strongest current trading surface, stronger than vague `sell all` prompts
+  - use port-code-aware, map-backed route selection instead of naive price comparisons
+  - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
+  - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
   - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is temporarily warp-limited until a recharge surface is available again
   - revisit corporation-hauler trading and the unowned-ship mismatch after the current exploration/trading push
 
@@ -347,6 +347,41 @@ in the live Gradient Bang production game.
 - Long runs also exposed one session-auth quirk:
   - after repeated live `/start` calls, fresh sessions sometimes began returning `401`
   - `auth-sync` refreshed the repo `.env`, but the reliable immediate workaround was to pass a newly issued access token inline for the final summary reads
+
+### Port-Code Trade Correction
+
+- Added two new first-class helpers while cleaning up the current live trading surface:
+  - `session-nearest-mega-port` to rank known mega-ports by real map distance
+  - `session-move-to-sector` to use the exact movement prompt contract and validate arrival
+- Used `session-nearest-mega-port` live from sector `3236` and confirmed the nearest known recharge stop is still sector `472`, `9` hops away.
+- While trying to keep pushing trading from low warp, found the real bug in the route ranker:
+  - it had been comparing buy/sell prices without respecting the port code
+  - sector `318` is `SSS`, so it can only SELL Neuro Symbolics to the player, not BUY them from us
+  - the earlier `3236 -> 318` NS route looked profitable on price alone but was invalid gameplay
+- Reworked the trade-opportunity ranking to respect:
+  - port `B`/`S` directionality by commodity slot
+  - real port stock at the buy side
+  - route-loop safety checks so invalid buy/sell ports are rejected before prompting
+- Used the corrected local market view to recover the dirty live hold cleanly:
+  - from `318`, ranked valid NS buyers and found `3246` (`BBB`) as the nearest legal sale at `43`
+  - used `session-move-to-sector --sector-id 3246` and confirmed arrival headlessly
+  - sold the full `30` Neuro Symbolics at `43`, raising credits from `5,689` to `6,979`
+- Re-ranked from sector `3246` after the fix and got a coherent live result:
+  - best current wealth route: `318 -> 3246` Quantum Foam
+  - best current trading-volume route: `318 -> 3246` Neuro Symbolics
+  - best current raw-profit route still visible: `3236 -> 907` Neuro Symbolics
+- Proved the corrected wealth route live with one full `318 -> 3246` Quantum Foam cycle:
+  - profit `+150`
+  - credits `6,979 -> 7,129`
+  - warp `17 -> 11`
+- Pushed exploration again in parallel with the personal-ship cleanup:
+  - a fresh probe frontier run raised known sectors from `285` to `295`
+  - corporation sectors visited rose from `279` to `289`
+  - the probe continued onward and was most recently observed at sector `2419` with its task still active
+- Net effect of the correction:
+  - exploration rank improved from `39` to `37`
+  - trading volume improved from `208,658` to `212,648`
+  - wealth estimate improved from `37,839` to `38,229`
 
 ## Personal Impressions
 

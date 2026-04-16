@@ -157,10 +157,17 @@ Implemented:
 - a deterministic `session-trade-route-loop` built from bounded watched tasks,
   with per-step retries after the first long production run exposed transient
   move failures
+- first-class location helpers:
+  - `session-move-to-sector` for exact move-and-validate execution
+  - `session-nearest-mega-port` for recharge-route discovery from the live map
 - player-step validation that now polls live `status.snapshot` instead of
   waiting blindly for every `task.finish`
 - route-loop trade steps that now prefer exact frontend trade-order prompts
   when live price and quantity data is available
+- port-code-aware trade ranking and route safety checks:
+  - trade opportunities now respect `B`/`S` directionality by commodity
+  - buy-side stock now caps ranked volume
+  - the route loop now refuses invalid buy/sell ports before prompting
 - session-connect auth hardening:
   - repo-root `.env` now wins for `GB_*` credentials
   - session commands auto-login and retry once when `/start` returns `401`
@@ -192,6 +199,10 @@ Current blocker:
   corp ship purchase, corp ship tasking, garrison work, combat, and salvage
 - the next blockers are surface-specific:
   - some bot-driven actions still need task-aware waiting, not fire-and-close prompts
+  - some trade prompts look profitable on price alone but are invalid once the
+    port code is checked; the client now blocks that class of mistake, but the
+    remaining work is keeping every trading helper aligned with legal `B`/`S`
+    directionality
   - the exact unowned-ship collect prompt currently routes to `salvage_collect`
     and fails with `404 Salvage not available` even when `status.snapshot`
     reports `unowned_ships` in the current sector
@@ -206,21 +217,21 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `3236`
-- personal ship credits: `6739`
-- personal ship warp power: `23`
+- personal ship sector: `3246`
+- personal ship credits: `7129`
+- personal ship warp power: `11`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) most recently observed in standalone `ships.list` at sector `1187`
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) most recently observed in `ships.list` at sector `2419` with an active exploration task
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- known sectors: `272`
-- corporation sectors visited: `266`
+- known sectors: `295`
+- corporation sectors visited: `289`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `272` known sectors, currently observed at rank `39`
-- visible trading board entry: `208658` total volume, currently observed at rank `29`
-- visible wealth board entry: currently observed at rank `79`
+- visible exploration board entry: `295` known sectors, currently observed at rank `37`
+- visible trading board entry: `212648` total volume, currently observed at rank `29`
+- visible wealth board entry: currently observed at rank `79` with estimated wealth `38229`
 
 Latest live progression proved:
 
@@ -347,8 +358,34 @@ Latest live progression proved:
   - and another run whose loop result and later standalone `ships.list` read
     disagreed on final sector, reinforcing that post-task probe location is
     still eventually consistent across surfaces
+- added `session-nearest-mega-port` and `session-move-to-sector` so recharge
+  routing and exact relocation are first-class instead of ad hoc
+- used `session-nearest-mega-port` live from sector `3236` and confirmed the
+  nearest known megaport remains sector `472`, `9` hops away
+- found and fixed the most important remaining trade bug:
+  - the route ranker had been ignoring port `B`/`S` directionality and buy-side stock
+  - this made `3236 -> 318` Neuro Symbolics look profitable even though `318`
+    is `SSS` and cannot buy NS from the player
+- hardened the trade helpers after that discovery:
+  - `session-trade-opportunities` now ranks only legal routes
+  - `session-trade-route-loop` now stops on invalid buy/sell ports before issuing prompts
+- used the corrected market view to recover the live dirty hold:
+  - moved `318 -> 3246`
+  - sold `30` Neuro Symbolics at a valid `BBB` buyer for `1290` credits
+- re-ranked the corrected local graph from sector `3246`:
+  - best wealth route: `318 -> 3246` Quantum Foam
+  - best trading-volume route: `318 -> 3246` Neuro Symbolics
+  - best raw-profit route still visible: `3236 -> 907` Neuro Symbolics
+- proved the corrected wealth route live with one full `318 -> 3246` QF cycle:
+  - credits `6979 -> 7129`
+  - warp `17 -> 11`
+  - profit `+150`
+- pushed exploration again immediately after the trade correction:
+  - known sectors `285 -> 295`
+  - corporation sectors visited `279 -> 289`
+  - the visible exploration rank improved `39 -> 37`
 - current confirmed live board state:
-  - exploration rank `39`
+  - exploration rank `37`
   - trading rank `29`
   - wealth rank `79`
 
@@ -361,9 +398,8 @@ Interpretation:
 - the next concrete live-game push is now:
   - keep compounding exploration with cheap probe frontier loops until the
     current visible graph yields a better corp-expansion opportunity
-  - keep validating and hardening `session-auto-trade-loop` until the remaining
-    sell edge case disappears and the route runner can stay clean without
-    manual cleanup
+  - keep validating and hardening `session-auto-trade-loop` now that the
+    biggest false-positive route class is fixed at the ranker level
   - use realized trade profits to reach the next meaningful hull upgrade while
     keeping the account climbing on wealth instead of hovering just above the
     visible-board floor
@@ -423,6 +459,8 @@ Headless convenience wrappers, not counted separately:
 - `session-claim-all-rewards`
 - `session-player-task`
 - `session-corp-task`
+- `session-move-to-sector`
+- `session-nearest-mega-port`
 - `session-recharge-warp`
 - `session-transfer-credits`
 - `session-trade-route-loop`

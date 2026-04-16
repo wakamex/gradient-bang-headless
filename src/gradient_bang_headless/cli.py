@@ -38,6 +38,13 @@ from .http import (
 from .session_loop import LoopTargets, SessionLoopOptions, SessionLoopRunner
 
 
+RESOURCE_PORT_CODE_ORDER = [
+    "quantum_foam",
+    "retro_organics",
+    "neuro_symbolics",
+]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if not getattr(args, "command", None):
@@ -185,6 +192,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_session_connect_args(session_known_ports)
     session_known_ports.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_nearest_mega_port = sub.add_parser(
+        "session-nearest-mega-port",
+        help="Connect a session, inspect the known map, and rank the nearest known mega-ports",
+    )
+    _add_session_connect_args(session_nearest_mega_port)
+    session_nearest_mega_port.add_argument("--limit", type=int, default=5)
+    session_nearest_mega_port.add_argument("--map-max-hops", type=int, default=100)
+    session_nearest_mega_port.add_argument("--map-max-sectors", type=int, default=2000)
+    session_nearest_mega_port.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
     session_trade_opportunities = sub.add_parser(
         "session-trade-opportunities",
@@ -353,6 +370,15 @@ def build_parser() -> argparse.ArgumentParser:
     session_player_task.add_argument("--task-description", required=True)
     session_player_task.add_argument("--wait-for-finish", action="store_true")
     session_player_task.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
+    session_move_to_sector = sub.add_parser(
+        "session-move-to-sector",
+        help="Connect a session, send the exact move-to-sector prompt, and validate arrival",
+    )
+    _add_session_connect_args(session_move_to_sector)
+    session_move_to_sector.add_argument("--sector-id", required=True, type=int)
+    session_move_to_sector.add_argument("--step-retries", type=int, default=1)
+    session_move_to_sector.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
     session_recharge_warp = sub.add_parser(
         "session-recharge-warp",
@@ -1057,6 +1083,34 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-nearest-mega-port":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            status_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
+            current_sector = _coerce_int(_extract_bridge_payload(status_result).get("sector", {}).get("id"))
+            map_result = await bridge.get_my_map(
+                center_sector=current_sector,
+                max_hops=args.map_max_hops,
+                max_sectors=args.map_max_sectors,
+                timeout=args.event_timeout_seconds,
+            )
+            summary = _rank_nearest_mega_ports(
+                status_result=status_result,
+                map_result=map_result,
+                limit=args.limit,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "summary": summary,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-trade-opportunities":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
@@ -1438,6 +1492,29 @@ async def dispatch(args: argparse.Namespace) -> int:
                         "prompt": args.task_description,
                         "result": action_result,
                         "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-move-to-sector":
+        prompt = _move_to_sector_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_move_to_sector(
+                bridge,
+                sector_id=args.sector_id,
+                prompt=prompt,
+                retries=args.step_retries,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -2247,6 +2324,28 @@ def _is_start_unauthorized_error(exc: HeadlessBridgeError) -> bool:
     return False
 
 
+def _is_daily_connect_timeout_error(exc: HeadlessBridgeError) -> bool:
+    message = getattr(exc, "message", "") or ""
+    if "connect timed out after" not in message:
+        return False
+    payload = exc.payload
+    if not isinstance(payload, dict):
+        return False
+    events = payload.get("events")
+    if not isinstance(events, list):
+        return False
+    saw_connected = False
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") == "connected":
+            saw_connected = True
+            continue
+        if event.get("event") == "transport_state_changed" and event.get("state") == "connected":
+            saw_connected = True
+    return saw_connected
+
+
 async def _refresh_session_access_token(config: HeadlessConfig) -> dict[str, Any]:
     email = _require_text(None, config.email, "email", env_name="GB_EMAIL")
     password = _require_text(None, config.password, "password", env_name="GB_PASSWORD")
@@ -2290,6 +2389,21 @@ async def _connect_session_bridge(
     try:
         return await bridge.connect(options)
     except HeadlessBridgeError as exc:
+        if options.transport == "daily" and _is_daily_connect_timeout_error(exc):
+            retried_options = SessionConnectOptions(
+                access_token=options.access_token,
+                functions_url=options.functions_url,
+                transport=options.transport,
+                character_id=options.character_id,
+                session_id=options.session_id,
+                connect_timeout_ms=max(options.connect_timeout_ms * 2, 40_000),
+                request_timeout_ms=max(options.request_timeout_ms, options.connect_timeout_ms * 2),
+                bypass_tutorial=options.bypass_tutorial,
+                voice_id=options.voice_id,
+                personality_tone=options.personality_tone,
+                character_name=options.character_name,
+            )
+            return await bridge.connect(retried_options)
         if args.access_token or not _is_start_unauthorized_error(exc):
             raise
         await _refresh_session_access_token(config)
@@ -2320,6 +2434,13 @@ def _trade_order_prompt_from_args(args: argparse.Namespace) -> str:
         )
     except ValueError as exc:
         raise HeadlessBridgeError("session-trade-order", str(exc)) from exc
+
+
+def _move_to_sector_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_move_to_sector_prompt(sector_id=args.sector_id)
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-move-to-sector", str(exc)) from exc
 
 
 def _recharge_warp_prompt_from_args(args: argparse.Namespace) -> str:
@@ -2845,6 +2966,51 @@ async def _run_player_task_prompt(
     }
 
 
+async def _run_move_to_sector(
+    bridge: HeadlessBridgeProcess,
+    *,
+    sector_id: int,
+    prompt: str,
+    retries: int,
+    timeout: float,
+) -> dict[str, Any]:
+    if sector_id <= 0:
+        raise HeadlessBridgeError("session-move-to-sector", "--sector-id must be > 0")
+    if retries < 0:
+        raise HeadlessBridgeError("session-move-to-sector", "--step-retries must be >= 0")
+
+    initial_status = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
+    initial_summary = initial_status["summary"]
+    if initial_summary.get("sector_id") == sector_id:
+        return {
+            "prompt": prompt,
+            "already_there": True,
+            "initial_status": initial_status,
+            "result": None,
+            "final_status": initial_status,
+        }
+
+    step_result = await _run_validated_player_step(
+        bridge,
+        prompt=prompt,
+        timeout=timeout,
+        retries=retries,
+        validate=lambda summary: summary.get("sector_id") == sector_id,
+    )
+    final_status = (
+        step_result.get("result", {}).get("status")
+        if isinstance(step_result.get("result"), dict)
+        else None
+    )
+    return {
+        "prompt": prompt,
+        "already_there": False,
+        "initial_status": initial_status,
+        "result": step_result,
+        "final_status": final_status,
+    }
+
+
 async def _run_validated_player_step(
     bridge: HeadlessBridgeProcess,
     *,
@@ -2926,6 +3092,25 @@ def _status_warp(summary: dict[str, Any]) -> int | None:
     return warp if isinstance(warp, int) else None
 
 
+def _port_trade_marker(port_code: str | None, commodity: str) -> str | None:
+    if commodity not in RESOURCE_PORT_CODE_ORDER:
+        return None
+    normalized_code = (port_code or "").strip().upper()
+    index = RESOURCE_PORT_CODE_ORDER.index(commodity)
+    if index >= len(normalized_code):
+        return None
+    marker = normalized_code[index]
+    return marker if marker in {"B", "S"} else None
+
+
+def _port_allows_buy(port_code: str | None, commodity: str) -> bool:
+    return _port_trade_marker(port_code, commodity) == "S"
+
+
+def _port_allows_sell(port_code: str | None, commodity: str) -> bool:
+    return _port_trade_marker(port_code, commodity) == "B"
+
+
 def _map_graph_from_payload(payload: dict[str, Any]) -> dict[int, set[int]]:
     graph: dict[int, set[int]] = {}
     if not isinstance(payload, dict):
@@ -2969,6 +3154,83 @@ def _shortest_path_lengths(graph: dict[int, set[int]], *, start: int) -> dict[in
             distances[neighbor] = base_distance + 1
             queue.append(neighbor)
     return distances
+
+
+def _shortest_path(graph: dict[int, set[int]], *, start: int, target: int) -> list[int]:
+    if start <= 0 or target <= 0 or start not in graph or target not in graph:
+        return []
+    prev: dict[int, int | None] = {start: None}
+    queue: deque[int] = deque([start])
+    while queue:
+        sector = queue.popleft()
+        if sector == target:
+            break
+        for neighbor in graph.get(sector, set()):
+            if neighbor in prev:
+                continue
+            prev[neighbor] = sector
+            queue.append(neighbor)
+    if target not in prev:
+        return []
+    path: list[int] = []
+    current: int | None = target
+    while current is not None:
+        path.append(current)
+        current = prev[current]
+    path.reverse()
+    return path
+
+
+def _rank_nearest_mega_ports(
+    *,
+    status_result: dict[str, Any],
+    map_result: dict[str, Any],
+    limit: int,
+) -> dict[str, Any]:
+    if limit <= 0:
+        raise HeadlessBridgeError("session-nearest-mega-port", "--limit must be > 0")
+
+    status_payload = _extract_bridge_payload(status_result)
+    map_payload = _extract_bridge_payload(map_result)
+    current_sector = _coerce_int(status_payload.get("sector", {}).get("id"))
+    sectors = map_payload.get("sectors") if isinstance(map_payload, dict) else None
+    graph = _map_graph_from_payload(map_payload)
+
+    rows: list[dict[str, Any]] = []
+    if not isinstance(sectors, list):
+        return {
+            "current_sector": current_sector or None,
+            "nearest": [],
+        }
+
+    for sector in sectors:
+        if not isinstance(sector, dict):
+            continue
+        port = sector.get("port")
+        if not isinstance(port, dict) or not port.get("mega"):
+            continue
+        sector_id = _coerce_int(sector.get("id"))
+        if sector_id <= 0:
+            continue
+        path = _shortest_path(graph, start=current_sector, target=sector_id)
+        if not path:
+            continue
+        rows.append(
+            {
+                "sector_id": sector_id,
+                "distance": len(path) - 1,
+                "path": path,
+                "port_code": port.get("code"),
+                "position": sector.get("position"),
+                "region": sector.get("region"),
+            }
+        )
+
+    rows.sort(key=lambda row: (row["distance"], row["sector_id"]))
+    return {
+        "current_sector": current_sector or None,
+        "nearest": rows[:limit],
+    }
 
 
 def _rank_trade_opportunities(
@@ -3019,6 +3281,10 @@ def _rank_trade_opportunities(
         buy_prices = buy_port_info.get("prices")
         if not isinstance(buy_prices, dict):
             continue
+        buy_stock = buy_port_info.get("stock")
+        if not isinstance(buy_stock, dict):
+            continue
+        buy_port_code = buy_port_info.get("code")
         buy_hops = _coerce_int(buy_port.get("hops_from_start"))
 
         for sell_port in ports:
@@ -3033,6 +3299,7 @@ def _rank_trade_opportunities(
             sell_prices = sell_port_info.get("prices")
             if not isinstance(sell_prices, dict):
                 continue
+            sell_port_code = sell_port_info.get("code")
 
             buy_sector_id = _coerce_int(buy_sector.get("id"))
             sell_sector_id = _coerce_int(sell_sector.get("id"))
@@ -3053,12 +3320,17 @@ def _rank_trade_opportunities(
             total_hops = distance_to_buy + inter_port_hops
 
             for commodity in commodity_list:
+                if not _port_allows_buy(str(buy_port_code), commodity):
+                    continue
+                if not _port_allows_sell(str(sell_port_code), commodity):
+                    continue
                 buy_price = _coerce_int(buy_prices.get(commodity))
                 sell_price = _coerce_int(sell_prices.get(commodity))
                 spread = sell_price - buy_price
                 if buy_price <= 0 or spread <= 0:
                     continue
-                max_units = min(cargo_capacity, ship_credits // buy_price)
+                available_stock = _coerce_int(buy_stock.get(commodity))
+                max_units = min(cargo_capacity, ship_credits // buy_price, available_stock)
                 if max_units <= 0:
                     continue
                 expected_profit = spread * max_units
@@ -3067,7 +3339,9 @@ def _rank_trade_opportunities(
                     {
                         "commodity": commodity,
                         "buy_sector": buy_sector_id,
+                        "buy_port_code": buy_port_code,
                         "sell_sector": sell_sector_id,
+                        "sell_port_code": sell_port_code,
                         "buy_price": buy_price,
                         "sell_price": sell_price,
                         "spread": spread,
@@ -3347,8 +3621,8 @@ async def _recover_with_trade_order(
     commodity: str,
     timeout: float,
 ) -> dict[str, Any]:
-    prompt = _build_route_sell_prompt(summary, commodity)
-    action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
+    trade_order_prompt = _build_route_sell_prompt(summary, commodity)
+    action_result = await bridge.user_text_input(trade_order_prompt, wait_seconds=0.0)
     watch_result = await _watch_player_task(
         bridge,
         wait_for_finish=True,
@@ -3357,12 +3631,31 @@ async def _recover_with_trade_order(
     status_result = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
     final_summary = status_result["summary"]
     success = _cargo_units(final_summary, commodity) == 0
+    fallback_result = None
+    if not success:
+        fallback_prompt = build_sell_all_commodity_prompt(commodity=commodity)
+        fallback_result = await _run_validated_player_step(
+            bridge,
+            prompt=fallback_prompt,
+            timeout=timeout,
+            retries=1,
+            validate=lambda current: _cargo_units(current, commodity) == 0,
+        )
+        fallback_status = (
+            fallback_result.get("result", {}).get("status")
+            if isinstance(fallback_result.get("result"), dict)
+            else None
+        )
+        if isinstance(fallback_status, dict):
+            final_summary = fallback_status.get("summary", final_summary)
+            success = _cargo_units(final_summary, commodity) == 0
     return {
-        "prompt": prompt,
+        "prompt": trade_order_prompt,
         "result": action_result,
         "watch": watch_result,
         "status": status_result,
         "success": success,
+        "fallback": fallback_result,
     }
 
 
@@ -3439,6 +3732,9 @@ async def _run_trade_route_loop(
                     current_summary = after_move
                     break
                 current_summary = after_move
+            if not _port_allows_sell(current_summary.get("port_code"), commodity):
+                stop_reason = "invalid_sell_port"
+                break
             sell_prompt = _build_route_sell_prompt(current_summary, commodity)
             sell_outcome = await _run_validated_player_step(
                 bridge,
@@ -3500,6 +3796,9 @@ async def _run_trade_route_loop(
                 current_summary = after_move_to_buy
                 break
             current_summary = after_move_to_buy
+        if not _port_allows_buy(current_summary.get("port_code"), commodity):
+            stop_reason = "invalid_buy_port"
+            break
 
         buy_prompt = _build_route_buy_prompt(current_summary, commodity)
         buy_outcome = await _run_validated_player_step(
@@ -3552,6 +3851,9 @@ async def _run_trade_route_loop(
             current_summary = after_move_to_sell
             break
         current_summary = after_move_to_sell
+        if not _port_allows_sell(current_summary.get("port_code"), commodity):
+            stop_reason = "invalid_sell_port"
+            break
 
         sell_prompt = _build_route_sell_prompt(current_summary, commodity)
         sell_outcome = await _run_validated_player_step(
