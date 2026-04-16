@@ -93,6 +93,32 @@ def build_transfer_credits_prompt(
     )
 
 
+def build_transfer_warp_prompt(
+    *,
+    units: int,
+    to_ship_name: str,
+    to_ship_id: str | None = None,
+) -> str:
+    if units <= 0:
+        raise ValueError("units must be > 0")
+    normalized_ship_name = to_ship_name.strip()
+    if not normalized_ship_name:
+        raise ValueError("to_ship_name is required")
+
+    ship_ref = normalized_ship_name
+    if to_ship_id:
+        normalized_ship_id = to_ship_id.strip()
+        if not normalized_ship_id:
+            raise ValueError("to_ship_id must be non-empty when provided")
+        ship_ref = f"{ship_ref} [{normalized_ship_id[:6]}]"
+    warp_label = "unit" if units == 1 else "units"
+
+    return (
+        f"Transfer {units} warp power {warp_label} to {ship_ref} in this sector, "
+        "then stop and report remaining warp."
+    )
+
+
 def build_ship_purchase_prompt(
     *,
     ship_display_name: str,
@@ -150,6 +176,37 @@ def build_corporation_ship_explore_task_description(*, new_sectors: int) -> str:
     return (
         f"explore at least {new_sectors} new sectors from your current position, "
         "then stop and report final sector and remaining warp"
+    )
+
+
+def build_corporation_ship_move_to_sector_task_description(*, sector_id: int) -> str:
+    if sector_id <= 0:
+        raise ValueError("sector_id must be > 0")
+    return f"travel to sector {sector_id} and stop there"
+
+
+def build_corporation_ship_transfer_warp_task_description(
+    *,
+    units: int,
+    to_ship_name: str,
+    to_ship_id: str | None = None,
+) -> str:
+    if units <= 0:
+        raise ValueError("units must be > 0")
+    normalized_ship_name = to_ship_name.strip()
+    if not normalized_ship_name:
+        raise ValueError("to_ship_name is required")
+
+    ship_ref = normalized_ship_name
+    if to_ship_id:
+        normalized_ship_id = to_ship_id.strip()
+        if not normalized_ship_id:
+            raise ValueError("to_ship_id must be non-empty when provided")
+        ship_ref = f"{ship_ref} [{normalized_ship_id[:6]}]"
+    warp_label = "unit" if units == 1 else "units"
+    return (
+        f"transfer {units} warp power {warp_label} to {ship_ref} in this sector, "
+        "then stop and report remaining warp"
     )
 
 

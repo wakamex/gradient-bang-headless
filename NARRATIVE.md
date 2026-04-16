@@ -11,17 +11,17 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `3246`
-- Personal ship credits: `7,129`
-- Personal ship warp: `11/500`
+- Personal ship sector: `867`
+- Personal ship credits: `7,549`
+- Personal ship warp: `212/500`
 - Corporation fleet:
-  - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) currently observed in sector `2419` with an active exploration task
+  - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
+  - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `295` known sectors, currently observed at rank `37`
-  - wealth: on the visible board, currently observed at rank `79` with estimated wealth `38,229`
-  - trading: on the visible board, currently observed at rank `29` with `212,648` total trade volume across `222` trades
+  - exploration: on the visible board at `309` known sectors, currently observed at rank `38`
+  - wealth: on the visible board, currently observed at rank `79` with visible row value `39,649`
+  - trading: on the visible board, currently observed at rank `28` with `233,228` total trade volume across `238` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
@@ -31,8 +31,9 @@ in the live Gradient Bang production game.
   - use port-code-aware, map-backed route selection instead of naive price comparisons
   - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
   - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
-  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is temporarily warp-limited until a recharge surface is available again
-  - revisit corporation-hauler trading and the unowned-ship mismatch after the current exploration/trading push
+  - use cheap cargo as a wealth-board lever, because the live leaderboard currently values cargo at a flat `100` credits per unit
+  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now partly off-route in neutral space after a rescue attempt
+  - finish turning warp transfer plus corp movement into a reusable rescue workflow so exploration runs stop dying permanently on `0 warp`
 
 ## Timeline
 
@@ -382,6 +383,59 @@ in the live Gradient Bang production game.
   - exploration rank improved from `39` to `37`
   - trading volume improved from `208,658` to `212,648`
   - wealth estimate improved from `37,839` to `38,229`
+
+### Warp Logistics, Leaderboard Neighbors, And Rescue Work
+
+- Added first-class warp-transfer support in both directions:
+  - `session-corp-transfer-warp` was proven live first when `gbheadless Auto Hauler 1` transferred `200` warp to the Kestrel in sector `3246`
+  - `session-transfer-warp` was then proven live in the other direction when the Kestrel transferred `100` warp back to the hauler
+- That changed the operational model in a useful way:
+  - warp is not counted in leaderboard wealth
+  - credits and cargo are
+  - so moving warp between ships is a real way to extend runs without paying the normal wealth penalty of buying more fuel
+- Added a first-class `leaderboard-neighbors` command so the next visible rank targets are explicit instead of inferred from full leaderboard dumps.
+- The live gaps right after that addition were:
+  - exploration rank `38`, only `6` sectors behind the next visible row
+  - trading rank `28`, `22,076` volume behind the next visible row
+  - wealth rank `79`, only `32` credits behind the next visible row
+- Read the wealth SQL closely enough to confirm the deeper optimization quirk:
+  - cargo is scored at a flat `100` credits per unit in the live leaderboard view
+  - that means cheap cargo is the best wealth booster, not expensive cargo
+  - in practice, the strongest wealth play is to fill holds with the cheapest available commodity rather than the most profitable one
+- Added a first-class `session-corp-move-to-sector` helper after live corp-ship moves kept making partial progress but were too opaque when watched as one broad task.
+- Used the new helper immediately on the live account:
+  - the hauler started in sector `1413` with `110` warp
+  - it progressed through sector `3139`
+  - then reached sector `2204`
+  - and finally stranded there with `0/500` warp instead of reaching the probe in sector `3341`
+- That is still useful progress even though the rescue is incomplete:
+  - the helper now makes partial corp movement legible
+  - the failure mode is no longer ambiguous
+  - we can see exactly where the hauler ran out of fuel
+- While trying to meet the hauler, repeated `session-move-to-sector --sector-id 2204` calls moved the Kestrel incrementally through live space even when the helper itself timed out waiting for a final `status.snapshot`.
+- The Kestrel path was:
+  - `3246 -> 3094`
+  - `3094 -> 1333`
+  - `1333 -> 867`
+- That exposed a new client weakness:
+  - long player moves can make real progress while the current helper still reports failure
+  - the same kind of progressive move wrapper that now exists for corp ships is still needed for the personal ship
+- Trading still moved forward during this rescue/logistics phase:
+  - used the exact `session-trade-order` sell surface to clear a dirty `30`-unit NS hold at sector `3246`
+  - sold at `43` credits per unit for `1,290` credits
+  - pushed visible trading volume to `233,228`
+  - improved the trading board from rank `29` to rank `28`
+- Net live state after this phase:
+  - exploration: `309` known sectors, rank `38`
+  - trading: rank `28`
+  - wealth: rank `79`
+  - Kestrel: sector `867`, `7,549` credits, `212` warp
+  - hauler: sector `2204`, `0` warp
+  - probe: sector `3341`, `0` warp
+- Strategic conclusion from this round:
+  - exploration is still one good rescue away from the next visible rank
+  - trading remains the steadiest board to grind with exact buy/sell orders
+  - wealth is the most exploitable board mechanically because cheap cargo converts cash into leaderboard value more efficiently than profitable cargo does
 
 ## Personal Impressions
 

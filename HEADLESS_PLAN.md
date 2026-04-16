@@ -217,21 +217,21 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `3246`
-- personal ship credits: `7129`
-- personal ship warp power: `11`
-- corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) most recently observed in `ships.list` at sector `2419` with an active exploration task
+- personal ship sector: `867`
+- personal ship credits: `7549`
+- personal ship warp power: `212`
+- corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- known sectors: `295`
-- corporation sectors visited: `289`
+- known sectors: `309`
+- corporation sectors visited: `303`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `295` known sectors, currently observed at rank `37`
-- visible trading board entry: `212648` total volume, currently observed at rank `29`
-- visible wealth board entry: currently observed at rank `79` with estimated wealth `38229`
+- visible exploration board entry: `309` known sectors, currently observed at rank `38`
+- visible trading board entry: `233228` total volume, currently observed at rank `28`
+- visible wealth board entry: currently observed at rank `79` with visible row value `39649`
 
 Latest live progression proved:
 
@@ -388,23 +388,37 @@ Latest live progression proved:
   - exploration rank `37`
   - trading rank `29`
   - wealth rank `79`
+- added and proved bidirectional warp-transfer surfaces:
+  - `session-corp-transfer-warp` moved `200` warp from the hauler to the Kestrel
+  - `session-transfer-warp` moved `100` warp from the Kestrel back to the hauler
+- added `leaderboard-neighbors` so the next visible gaps are explicit in one command instead of inferred from raw leaderboard dumps
+- read the live wealth view closely enough to confirm a flat cargo valuation rule:
+  - every cargo unit counts as `100` credits on the wealth board
+  - so cheap cargo is the strongest wealth lever, not expensive cargo
+- added `session-corp-move-to-sector` after live corp moves kept making partial progress that `session-corp-task` did not summarize clearly
+- used that new helper live and got a clean rescue-path diagnosis:
+  - hauler moved `1413 -> 3139 -> 2204`
+  - then stranded with `0/500` warp before reaching the probe in sector `3341`
+- repeated `session-move-to-sector --sector-id 2204` also exposed a remaining player-side gap:
+  - the helper timed out, but the Kestrel still advanced `3246 -> 3094 -> 1333 -> 867`
+  - so long player moves still need the same kind of progressive wrapper that now exists for corp ships
+- used the exact `session-trade-order` sell surface to clear a dirty `30`-unit NS hold at sector `3246`
+  - sold `30` units at `43` for `1,290` credits
+  - pushed visible trading to rank `28`
 
 Interpretation:
 
 - the live player path is working
 - the next bottleneck is no longer tutorial progression
+- the next highest-value client hardening is progressive player movement, because both rescue logistics and map repositioning now make real progress without a reliable final watcher result
 - the remaining work is expanding reliable post-tutorial surfaces and
   documenting which website actions still degrade when driven headlessly
 - the next concrete live-game push is now:
-  - keep compounding exploration with cheap probe frontier loops until the
-    current visible graph yields a better corp-expansion opportunity
+  - finish the probe rescue workflow by chaining player warp transfer, corp movement, and corp warp transfer cleanly enough that exploration tasks stop dying on `0` warp
   - keep validating and hardening `session-auto-trade-loop` now that the
     biggest false-positive route class is fixed at the ranker level
-  - use realized trade profits to reach the next meaningful hull upgrade while
-    keeping the account climbing on wealth instead of hovering just above the
-    visible-board floor
-  - find or restore a reliable warp-recharge path for the personal ship, since
-    that is now the main limiter on further direct trading pushes
+  - use cheap cargo intentionally when the goal is wealth rank rather than trading volume, because the live wealth view rewards flat cargo units
+  - keep exact trade-order sell surfaces in the loop, because they are still the most reliable way to turn a dirty hold back into visible trading progress
   - either make unowned-ship collection work or document it as a live bot/path
     bug with clear reproduction
 

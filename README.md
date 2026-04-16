@@ -24,9 +24,10 @@ This scaffold supports:
 - a first-class `session-trade-opportunities` helper that ranks the current known-port graph
 - a first-class `session-auto-trade-loop` that picks a route for `wealth`, `trading`, or raw `profit`
 - a first-class `session-move-to-sector` helper for exact move-and-validate execution
+- a first-class `session-corp-move-to-sector` helper for repeated partial corporation-ship moves toward a target sector
 - a first-class `session-nearest-mega-port` helper for recharge-route discovery
 - exact frontend prompt contracts for trade orders and ship purchase requests
-- first-class logistics helpers for warp recharge and credit transfers
+- first-class logistics helpers for warp recharge, credit transfer, and bidirectional warp transfer
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
 - a deterministic `session-trade-route-loop` for repeatable personal trading
 - a reusable `loop` runner for long bot-driven objectives with state polling and reprompts
@@ -79,6 +80,7 @@ gb-headless character-create --access-token "$GB_ACCESS_TOKEN"
 gb-headless start-session --access-token "$GB_ACCESS_TOKEN"
 gb-headless leaderboard-resources
 gb-headless leaderboard-self-summary --transport daily
+gb-headless leaderboard-neighbors --transport daily
 gb-headless signup-and-start \
   --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
 gb-headless session-connect --character-id "$GB_CHARACTER_ID" --access-token "$GB_ACCESS_TOKEN"
@@ -200,6 +202,13 @@ gb-headless session-transfer-credits \
   --amount 100 \
   --to-ship-name "gbheadless Auto Hauler 1" \
   --to-ship-id c7c348
+gb-headless session-transfer-warp \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --units 100 \
+  --to-ship-name "gbheadless Auto Hauler 1" \
+  --to-ship-id c7c348 \
+  --wait-for-finish
 gb-headless session-trade-route-loop \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -208,6 +217,12 @@ gb-headless session-trade-route-loop \
   --commodity neuro_symbolics \
   --max-cycles 6 \
   --step-retries 2
+gb-headless session-corp-move-to-sector \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --ship-name "gbheadless Auto Hauler 1" \
+  --ship-id c7c348 \
+  --sector-id 3341
 gb-headless call leaderboard_resources --method GET
 gb-headless status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless plot-course --to-sector 301 --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
@@ -225,6 +240,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `leaderboard-self-summary` combines the public leaderboard read with live
   session status and ship state to produce a compact "my stats vs leaders"
   summary for the configured character.
+- `leaderboard-neighbors` is the preferred command for planning the next
+  visible rank push. It shows the nearest visible row above and below the
+  current player in each public category.
 - `status`, `move`, `plot-course`, `map-region`, `known-ports`, `trade`,
   `recharge-warp`, `purchase-fighters`, `ship-definitions`, `ship-purchase`,
   `quest-status`, `quest-assign`, and `quest-claim-reward` are the preferred
@@ -254,8 +272,12 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   single-route trade loops or move-and-sell steps.
 - `session-move-to-sector` is the preferred exact movement wrapper when you
   want a deterministic relocate-and-stop action without writing freeform task text.
-- `session-recharge-warp` and `session-transfer-credits` are first-class
-  wrappers around regular-player logistics prompts that were proven live.
+- `session-corp-move-to-sector` is the preferred corp-ship movement wrapper
+  for long rescue/logistics legs because live corp tasks often make partial
+  progress before stopping.
+- `session-recharge-warp`, `session-transfer-credits`, and
+  `session-transfer-warp` are first-class wrappers around regular-player
+  logistics prompts that were proven live.
 - `session-trade-route-loop` is the preferred surface for repeatable personal
   trade grinding. It uses bounded watched tasks rather than one broad
   freeform objective, retries transient step failures, and now places exact

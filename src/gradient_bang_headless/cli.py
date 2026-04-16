@@ -12,8 +12,10 @@ from .config import HeadlessConfig, repo_root, update_dotenv
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
 from .frontend_prompts import (
     build_buy_max_commodity_prompt,
+    build_corporation_ship_move_to_sector_task_description,
     build_recharge_warp_prompt,
     build_corporation_ship_explore_task_description,
+    build_corporation_ship_transfer_warp_task_description,
     build_corporation_ship_purchase_prompt,
     build_corporation_ship_task_prompt,
     build_garrison_collect_prompt,
@@ -27,6 +29,7 @@ from .frontend_prompts import (
     build_ship_purchase_prompt,
     build_trade_order_prompt,
     build_transfer_credits_prompt,
+    build_transfer_warp_prompt,
 )
 from .http import (
     EventScope,
@@ -126,6 +129,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_session_connect_args(leaderboard_self_summary)
     leaderboard_self_summary.add_argument("--force-refresh", action="store_true")
     leaderboard_self_summary.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    leaderboard_neighbors = sub.add_parser(
+        "leaderboard-neighbors",
+        help="Show the nearest visible leaderboard rows above and below the current player",
+    )
+    _add_session_connect_args(leaderboard_neighbors)
+    leaderboard_neighbors.add_argument("--force-refresh", action="store_true")
+    leaderboard_neighbors.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
     signup_and_start = sub.add_parser(
         "signup-and-start",
@@ -400,6 +411,17 @@ def build_parser() -> argparse.ArgumentParser:
     session_transfer_credits.add_argument("--wait-for-finish", action="store_true")
     session_transfer_credits.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
+    session_transfer_warp = sub.add_parser(
+        "session-transfer-warp",
+        help="Connect a session, transfer warp power to another ship in-sector via the proven player-task prompt, and watch task lifecycle events",
+    )
+    _add_session_connect_args(session_transfer_warp)
+    session_transfer_warp.add_argument("--units", required=True, type=int)
+    session_transfer_warp.add_argument("--to-ship-name", required=True)
+    session_transfer_warp.add_argument("--to-ship-id")
+    session_transfer_warp.add_argument("--wait-for-finish", action="store_true")
+    session_transfer_warp.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
     session_trade_route_loop = sub.add_parser(
         "session-trade-route-loop",
         help="Connect a session and run a deterministic personal trade route via bounded watched tasks",
@@ -483,6 +505,17 @@ def build_parser() -> argparse.ArgumentParser:
     session_corp_task.add_argument("--wait-for-finish", action="store_true")
     session_corp_task.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
+    session_corp_move_to_sector = sub.add_parser(
+        "session-corp-move-to-sector",
+        help="Connect a session and keep reissuing the proven corp move prompt until the ship arrives or stops making progress",
+    )
+    _add_session_connect_args(session_corp_move_to_sector)
+    session_corp_move_to_sector.add_argument("--ship-name", required=True)
+    session_corp_move_to_sector.add_argument("--ship-id")
+    session_corp_move_to_sector.add_argument("--sector-id", required=True, type=int)
+    session_corp_move_to_sector.add_argument("--max-segments", type=int, default=12)
+    session_corp_move_to_sector.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
     session_corp_explore_loop = sub.add_parser(
         "session-corp-explore-loop",
         help="Connect a session, send repeated frontier exploration tasks for a corporation ship, and stop on explicit targets",
@@ -495,6 +528,19 @@ def build_parser() -> argparse.ArgumentParser:
     session_corp_explore_loop.add_argument("--target-known-sectors", type=int)
     session_corp_explore_loop.add_argument("--target-corp-sectors", type=int)
     session_corp_explore_loop.add_argument("--event-timeout-seconds", type=float, default=180.0)
+
+    session_corp_transfer_warp = sub.add_parser(
+        "session-corp-transfer-warp",
+        help="Connect a session, task a corporation ship to transfer warp power in-sector, and watch task lifecycle events",
+    )
+    _add_session_connect_args(session_corp_transfer_warp)
+    session_corp_transfer_warp.add_argument("--ship-name", required=True)
+    session_corp_transfer_warp.add_argument("--ship-id")
+    session_corp_transfer_warp.add_argument("--units", required=True, type=int)
+    session_corp_transfer_warp.add_argument("--to-ship-name", required=True)
+    session_corp_transfer_warp.add_argument("--to-ship-id")
+    session_corp_transfer_warp.add_argument("--wait-for-finish", action="store_true")
+    session_corp_transfer_warp.add_argument("--event-timeout-seconds", type=float, default=120.0)
 
     session_collect_unowned_ship = sub.add_parser(
         "session-collect-unowned-ship",
@@ -934,6 +980,32 @@ async def dispatch(args: argparse.Namespace) -> int:
                     ships_result=ships_result,
                     transport=args.transport,
                 )
+            )
+        )
+        return 0
+
+    if args.command == "leaderboard-neighbors":
+        async with HeadlessApiClient(config) as client:
+            leaderboard_result = await client.leaderboard_resources(
+                force_refresh=args.force_refresh,
+            )
+
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            status_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
+
+        print(
+            dump_json(
+                {
+                    "connect": connect_result,
+                    "neighbors": _leaderboard_neighbors(
+                        config=config,
+                        leaderboard_result=leaderboard_result,
+                        status_result=status_result,
+                        transport=args.transport,
+                    ),
+                }
             )
         )
         return 0
@@ -1575,6 +1647,33 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-transfer-warp":
+        prompt = _transfer_warp_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await bridge.user_text_input(
+                prompt,
+                wait_seconds=0.0,
+            )
+            watch_result = await _watch_player_task(
+                bridge,
+                wait_for_finish=args.wait_for_finish,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-trade-route-loop":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
@@ -1690,6 +1789,55 @@ async def dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "session-corp-task":
         prompt = _corporation_ship_task_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await bridge.user_text_input(prompt)
+            watch_result = await _watch_corporation_task(
+                bridge,
+                ship_id=args.ship_id,
+                ship_name=args.ship_name,
+                wait_for_finish=args.wait_for_finish,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-corp-move-to-sector":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_corporation_move_to_sector(
+                bridge,
+                ship_id=args.ship_id,
+                ship_name=args.ship_name,
+                sector_id=args.sector_id,
+                max_segments=args.max_segments,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-corp-transfer-warp":
+        prompt = _corporation_ship_transfer_warp_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
             connect_result = await _connect_session_bridge(bridge, args, config)
@@ -2461,6 +2609,17 @@ def _transfer_credits_prompt_from_args(args: argparse.Namespace) -> str:
         raise HeadlessBridgeError("session-transfer-credits", str(exc)) from exc
 
 
+def _transfer_warp_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_transfer_warp_prompt(
+            units=args.units,
+            to_ship_name=args.to_ship_name,
+            to_ship_id=args.to_ship_id,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-transfer-warp", str(exc)) from exc
+
+
 def _ship_purchase_prompt_from_args(args: argparse.Namespace) -> str:
     try:
         return build_ship_purchase_prompt(
@@ -2490,6 +2649,36 @@ def _corporation_ship_task_prompt_from_args(args: argparse.Namespace) -> str:
         )
     except ValueError as exc:
         raise HeadlessBridgeError("session-corp-task", str(exc)) from exc
+
+
+def _corporation_ship_move_to_sector_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        task_description = build_corporation_ship_move_to_sector_task_description(
+            sector_id=args.sector_id,
+        )
+        return build_corporation_ship_task_prompt(
+            ship_name=args.ship_name,
+            ship_id=args.ship_id,
+            task_description=task_description,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-corp-move-to-sector", str(exc)) from exc
+
+
+def _corporation_ship_transfer_warp_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        task_description = build_corporation_ship_transfer_warp_task_description(
+            units=args.units,
+            to_ship_name=args.to_ship_name,
+            to_ship_id=args.to_ship_id,
+        )
+        return build_corporation_ship_task_prompt(
+            ship_name=args.ship_name,
+            ship_id=args.ship_id,
+            task_description=task_description,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-corp-transfer-warp", str(exc)) from exc
 
 
 def _collect_unowned_ship_prompt_from_args(args: argparse.Namespace) -> str:
@@ -3008,6 +3197,121 @@ async def _run_move_to_sector(
         "initial_status": initial_status,
         "result": step_result,
         "final_status": final_status,
+    }
+
+
+async def _run_corporation_move_to_sector(
+    bridge: HeadlessBridgeProcess,
+    *,
+    ship_id: str | None,
+    ship_name: str,
+    sector_id: int,
+    max_segments: int,
+    timeout: float,
+) -> dict[str, Any]:
+    if sector_id <= 0:
+        raise HeadlessBridgeError("session-corp-move-to-sector", "--sector-id must be > 0")
+    if max_segments <= 0:
+        raise HeadlessBridgeError("session-corp-move-to-sector", "--max-segments must be > 0")
+
+    prompt = build_corporation_ship_task_prompt(
+        ship_name=ship_name,
+        ship_id=ship_id,
+        task_description=build_corporation_ship_move_to_sector_task_description(sector_id=sector_id),
+    )
+    initial_ship_snapshot = await _fetch_owned_ship_snapshot(
+        bridge,
+        ship_id=ship_id,
+        ship_name=ship_name,
+        timeout=min(timeout, 30.0),
+    )
+    current_ship = initial_ship_snapshot["ship"]
+    segments: list[dict[str, Any]] = []
+
+    if current_ship.get("sector") == sector_id:
+        return {
+            "prompt": prompt,
+            "target_sector": sector_id,
+            "stop_reason": "already_there",
+            "initial_ship": initial_ship_snapshot,
+            "segments": segments,
+            "final_ship": current_ship,
+        }
+
+    stop_reason = "max_segments_reached"
+    for _ in range(max_segments):
+        start_ship = current_ship
+        action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
+        watch_result = await _watch_corporation_task(
+            bridge,
+            ship_id=ship_id,
+            ship_name=ship_name,
+            wait_for_finish=True,
+            timeout=timeout,
+        )
+        post_ship_snapshot = await _fetch_owned_ship_snapshot(
+            bridge,
+            ship_id=ship_id,
+            ship_name=ship_name,
+            timeout=min(timeout, 30.0),
+        )
+        post_ship = post_ship_snapshot["ship"]
+        ship_polls: list[dict[str, Any]] = []
+        poll_deadline = asyncio.get_running_loop().time() + min(timeout, 30.0)
+
+        while (
+            post_ship.get("current_task_id")
+            and post_ship.get("sector") != sector_id
+            and post_ship.get("destroyed_at") is None
+        ):
+            remaining = poll_deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(2.0, remaining))
+            next_snapshot = await _fetch_owned_ship_snapshot(
+                bridge,
+                ship_id=ship_id,
+                ship_name=ship_name,
+                timeout=min(remaining, 15.0),
+            )
+            ship_polls.append(next_snapshot)
+            post_ship_snapshot = next_snapshot
+            post_ship = next_snapshot["ship"]
+
+        progress_observed = post_ship.get("sector") != start_ship.get("sector")
+        segment = {
+            "prompt": prompt,
+            "result": action_result,
+            "watch": watch_result,
+            "ship": post_ship_snapshot,
+            "ship_polls": ship_polls,
+            "start_sector": start_ship.get("sector"),
+            "end_sector": post_ship.get("sector"),
+            "start_warp": start_ship.get("warp_power"),
+            "end_warp": post_ship.get("warp_power"),
+            "progress_observed": progress_observed,
+            "task_completion_inferred": bool(progress_observed and not watch_result.get("task_finished")),
+        }
+        segments.append(segment)
+        current_ship = post_ship
+
+        if current_ship.get("sector") == sector_id:
+            stop_reason = "arrived"
+            break
+        if current_ship.get("destroyed_at") is not None:
+            stop_reason = "ship_destroyed"
+            break
+        if not progress_observed:
+            stop_reason = watch_result.get("stop_reason") or "no_progress"
+            break
+
+    return {
+        "prompt": prompt,
+        "target_sector": sector_id,
+        "stop_reason": stop_reason,
+        "initial_ship": initial_ship_snapshot,
+        "segments": segments,
+        "final_ship": current_ship,
     }
 
 
@@ -4577,6 +4881,50 @@ def _leaderboard_self_summary(
     }
 
 
+def _leaderboard_neighbors(
+    *,
+    config: HeadlessConfig,
+    leaderboard_result: dict[str, Any],
+    status_result: dict[str, Any],
+    transport: str,
+) -> dict[str, Any]:
+    status_payload = _extract_bridge_payload(status_result)
+    player = status_payload.get("player") if isinstance(status_payload, dict) else None
+    source = status_payload.get("source") if isinstance(status_payload, dict) else None
+
+    player_name = player.get("name") if isinstance(player, dict) else None
+    character_id = player.get("id") if isinstance(player, dict) else None
+    if not isinstance(player_name, str) or not player_name:
+        player_name = config.character_name
+    if not isinstance(character_id, str) or not character_id:
+        character_id = config.character_id
+
+    return {
+        "player_name": player_name,
+        "character_id": character_id,
+        "transport": transport,
+        "leaderboard_cached": bool(leaderboard_result.get("cached")),
+        "status_timestamp": source.get("timestamp") if isinstance(source, dict) else None,
+        "neighbors": {
+            "wealth": _leaderboard_neighbor_summary(
+                _human_leaderboard_rows(leaderboard_result.get("wealth"), "total_wealth"),
+                stat_key="total_wealth",
+                character_id=character_id,
+            ),
+            "trading": _leaderboard_neighbor_summary(
+                _human_leaderboard_rows(leaderboard_result.get("trading"), "total_trade_volume"),
+                stat_key="total_trade_volume",
+                character_id=character_id,
+            ),
+            "exploration": _leaderboard_neighbor_summary(
+                _human_leaderboard_rows(leaderboard_result.get("exploration"), "sectors_visited"),
+                stat_key="sectors_visited",
+                character_id=character_id,
+            ),
+        },
+    }
+
+
 def _extract_bridge_payload(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(result, dict):
         return {}
@@ -4629,6 +4977,69 @@ def _leader_summary(entry: dict[str, Any] | None, stat_key: str) -> dict[str, An
         summary["total_trades"] = _coerce_int(entry.get("total_trades"))
         summary["ports_visited"] = _coerce_int(entry.get("ports_visited"))
     return summary
+
+
+def _leaderboard_neighbor_summary(
+    rows: list[dict[str, Any]],
+    *,
+    stat_key: str,
+    character_id: str | None,
+) -> dict[str, Any]:
+    own_entry = _find_leaderboard_entry(rows, character_id)
+    if not isinstance(own_entry, dict):
+        return {
+            "visible_rank": None,
+            "self": None,
+            "next_up": None,
+            "next_down": None,
+        }
+
+    try:
+        index = rows.index(own_entry)
+    except ValueError:
+        index = -1
+    visible_rank = index + 1 if index >= 0 else None
+    next_up = rows[index - 1] if index > 0 else None
+    next_down = rows[index + 1] if index >= 0 and index + 1 < len(rows) else None
+    own_value = _coerce_int(own_entry.get(stat_key))
+
+    return {
+        "visible_rank": visible_rank,
+        "self": _leaderboard_neighbor_entry(own_entry, stat_key=stat_key),
+        "next_up": _leaderboard_neighbor_entry(
+            next_up,
+            stat_key=stat_key,
+            gap=max(0, _coerce_int(next_up.get(stat_key)) - own_value) if isinstance(next_up, dict) else None,
+        ),
+        "next_down": _leaderboard_neighbor_entry(
+            next_down,
+            stat_key=stat_key,
+            gap=max(0, own_value - _coerce_int(next_down.get(stat_key))) if isinstance(next_down, dict) else None,
+        ),
+    }
+
+
+def _leaderboard_neighbor_entry(
+    entry: dict[str, Any] | None,
+    *,
+    stat_key: str,
+    gap: int | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    value = _coerce_int(entry.get(stat_key))
+    result = {
+        "player_name": entry.get("player_name"),
+        "value": value,
+    }
+    if gap is not None:
+        result["gap"] = gap
+    if stat_key == "total_wealth":
+        result["ships_owned"] = _coerce_int(entry.get("ships_owned"))
+    if stat_key == "total_trade_volume":
+        result["total_trades"] = _coerce_int(entry.get("total_trades"))
+        result["ports_visited"] = _coerce_int(entry.get("ports_visited"))
+    return result
 
 
 def _leaderboard_position(
