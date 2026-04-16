@@ -217,21 +217,22 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `867`
-- personal ship credits: `7549`
-- personal ship warp power: `212`
+- personal ship sector: `3124` (latest observed while a long RO trade loop was still running)
+- personal ship credits: `6037`
+- personal ship warp power: `431`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `4892` with `485/500` warp
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
-- cargo: empty
+- cargo: `30` Retro Organics
 - fighters: `300`
-- known sectors: `309`
-- corporation sectors visited: `303`
+- known sectors: `313`
+- corporation sectors visited: `307`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `309` known sectors, currently observed at rank `38`
-- visible trading board entry: `233228` total volume, currently observed at rank `28`
-- visible wealth board entry: currently observed at rank `79` with visible row value `39649`
+- visible exploration board entry: `313` known sectors, currently observed at rank `39`
+- visible trading board entry: `239348` total volume, currently observed at rank `28`
+- visible wealth board entry: currently observed at rank `78` with visible row value `39877`
 
 Latest live progression proved:
 
@@ -405,20 +406,47 @@ Latest live progression proved:
 - used the exact `session-trade-order` sell surface to clear a dirty `30`-unit NS hold at sector `3246`
   - sold `30` units at `43` for `1,290` credits
   - pushed visible trading to rank `28`
+- hardened `session-move-to-sector` into a segmented mover with status retry recovery, then used it live to get the Kestrel back to mega-port sector `1413`
+- recharged at `1413` to full and used forced leaderboard refreshes to validate the wealth exploit against live data:
+  - `30` Retro Organics at `8` credits each pushed visible wealth `79 -> 71`
+  - live wealth promotion depends on forcing a fresh leaderboard rebuild, not reading cached rows
+- fixed `session-collect-unowned-ship` so it includes sector context and can infer the current sector automatically
+- retested that surface live and narrowed the remaining failure:
+  - the prompt contract is now correct
+  - live collection still fails because the bot falls back to `salvage_collect` and gets `404 'Salvage not available'`
+- read live `ship.definitions` from the session path and confirmed a better exploration lever:
+  - fresh `Autonomous Probe` purchase price is only `1000`
+  - this is materially better than spending the Kestrel on a long warp rescue first
+- bought a new corp probe, `gbheadless Auto Probe I`, at sector `1413`
+- sent that new probe on a frontier task and proved immediate exploration progress:
+  - known sectors `309 -> 313`
+  - corp sectors visited `303 -> 307`
+  - latest observed probe sector `4892`
+  - next visible exploration row is now only `2` sectors away
+- re-ranked trading from the new `1413` hub:
+  - best raw profit: `Quantum Foam` `1413 -> 2891`
+  - best trading volume per hop: `Retro Organics` `1413 -> 3124`
+- launched a long RO route loop on `1413 <-> 3124` and confirmed it is productive but still too opaque in large batches:
+  - trading volume `233468 -> 239348`
+  - personal trades `239 -> 260`
+  - the loop still did not return a prompt bounded final result cleanly enough to count as a dependable unattended surface
 
 Interpretation:
 
 - the live player path is working
 - the next bottleneck is no longer tutorial progression
-- the next highest-value client hardening is progressive player movement, because both rescue logistics and map repositioning now make real progress without a reliable final watcher result
+- the next highest-value client hardening is no longer basic movement
+- player movement is now good enough to relocate deliberately back to a mega-port
+- the next weak surfaces are:
+  - long corp-task watching, because exploration progress can continue after the bounded wrapper gives up
+  - large trade-route batches, because they are productive but too opaque to trust as a clean unattended loop
 - the remaining work is expanding reliable post-tutorial surfaces and
   documenting which website actions still degrade when driven headlessly
 - the next concrete live-game push is now:
-  - finish the probe rescue workflow by chaining player warp transfer, corp movement, and corp warp transfer cleanly enough that exploration tasks stop dying on `0` warp
-  - keep validating and hardening `session-auto-trade-loop` now that the
-    biggest false-positive route class is fixed at the ranker level
-  - use cheap cargo intentionally when the goal is wealth rank rather than trading volume, because the live wealth view rewards flat cargo units
-  - keep exact trade-order sell surfaces in the loop, because they are still the most reliable way to turn a dirty hold back into visible trading progress
+  - keep using fresh `1000`-credit probes from a mega-port when the goal is exploration rank
+  - keep using cheap RO holds intentionally when the goal is wealth rank
+  - keep the `1413 <-> 3124` RO route as the current best live trading-volume grind
+  - harden corp-task watching and large-batch trade looping so the productive live paths are also operationally clean
   - either make unowned-ship collection work or document it as a live bot/path
     bug with clear reproduction
 

@@ -23,7 +23,7 @@ This scaffold supports:
 - first-class live session reads for status, ports, map, chat history, ship lists, ship definitions, corporation data, task events, and quest status
 - a first-class `session-trade-opportunities` helper that ranks the current known-port graph
 - a first-class `session-auto-trade-loop` that picks a route for `wealth`, `trading`, or raw `profit`
-- a first-class `session-move-to-sector` helper for exact move-and-validate execution
+- a first-class `session-move-to-sector` helper for segmented exact movement with status recovery
 - a first-class `session-corp-move-to-sector` helper for repeated partial corporation-ship moves toward a target sector
 - a first-class `session-nearest-mega-port` helper for recharge-route discovery
 - exact frontend prompt contracts for trade orders and ship purchase requests
@@ -191,7 +191,8 @@ gb-headless session-player-task \
 gb-headless session-move-to-sector \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
-  --sector-id 3246
+  --sector-id 3246 \
+  --max-segments 8
 gb-headless session-recharge-warp \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -271,7 +272,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   preferred surface for short deterministic bot-driven objectives like
   single-route trade loops or move-and-sell steps.
 - `session-move-to-sector` is the preferred exact movement wrapper when you
-  want a deterministic relocate-and-stop action without writing freeform task text.
+  want a deterministic relocate-and-stop action without writing freeform task
+  text. It now segments long live moves and retries status recovery when a
+  mid-move `status.snapshot` request lags behind real travel progress.
 - `session-corp-move-to-sector` is the preferred corp-ship movement wrapper
   for long rescue/logistics legs because live corp tasks often make partial
   progress before stopping.
@@ -282,6 +285,8 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   trade grinding. It uses bounded watched tasks rather than one broad
   freeform objective, retries transient step failures, and now places exact
   frontend-style trade orders when live price/quantity data is available.
+  Short explicit batches are currently more trustworthy than one very large
+  unattended run.
 - `session-nearest-mega-port` is the preferred recharge-planning helper. It
   uses the live session map graph and returns real shortest paths to known
   mega-ports.
@@ -309,7 +314,10 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `session-purchase-corp-ship` send the exact strings the upstream React
   client builds in `TradePanel.tsx` and `ShipDetails.tsx`.
 - `session-collect-unowned-ship` sends the exact string the upstream React
-  client builds in `SectorUnownedSubPanel.tsx`.
+  client builds in `SectorUnownedSubPanel.tsx`, and now auto-fills the current
+  sector when `--sector-id` is omitted. The live game path still appears to be
+  broken for real unowned-ship IDs because the bot falls back to
+  `salvage_collect` and gets `404 'Salvage not available'`.
 - `loop` is the supported path for bot-driven gameplay. It polls
   `status.snapshot`, tracks quest state, and reprompts on idle instead of
   relying on one-off shell snippets.

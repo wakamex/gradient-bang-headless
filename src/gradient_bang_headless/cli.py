@@ -389,6 +389,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_session_connect_args(session_move_to_sector)
     session_move_to_sector.add_argument("--sector-id", required=True, type=int)
     session_move_to_sector.add_argument("--step-retries", type=int, default=1)
+    session_move_to_sector.add_argument("--max-segments", type=int, default=12)
     session_move_to_sector.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
     session_recharge_warp = sub.add_parser(
@@ -548,6 +549,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_session_connect_args(session_collect_unowned_ship)
     session_collect_unowned_ship.add_argument("--ship-id", required=True)
+    session_collect_unowned_ship.add_argument("--sector-id", type=int)
     session_collect_unowned_ship.add_argument("--event-timeout-seconds", type=float, default=45.0)
     session_collect_unowned_ship.add_argument("--poll-interval-seconds", type=float, default=3.0)
 
@@ -1580,6 +1582,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                 sector_id=args.sector_id,
                 prompt=prompt,
                 retries=args.step_retries,
+                max_segments=args.max_segments,
                 timeout=args.event_timeout_seconds,
             )
             print(
@@ -1888,10 +1891,22 @@ async def dispatch(args: argparse.Namespace) -> int:
             return 0
 
     if args.command == "session-collect-unowned-ship":
-        prompt = _collect_unowned_ship_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
             connect_result = await _connect_session_bridge(bridge, args, config)
+            initial_status = None
+            current_sector_id = args.sector_id
+            if current_sector_id is None:
+                initial_status = await _fetch_status_snapshot_with_retries(
+                    bridge,
+                    timeout=min(args.event_timeout_seconds, 30.0),
+                    context="session-collect-unowned-ship",
+                )
+                current_sector_id = _coerce_int(initial_status["summary"].get("sector_id"))
+            prompt = _collect_unowned_ship_prompt_from_args(
+                args,
+                current_sector_id=current_sector_id,
+            )
             action_result = await bridge.user_text_input(prompt)
             watch_result = await _wait_for_owned_ship(
                 bridge,
@@ -1903,6 +1918,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                 dump_json(
                     {
                         "connect": connect_result,
+                        "initial_status": initial_status,
                         "prompt": prompt,
                         "result": action_result,
                         "watch": watch_result,
@@ -2681,9 +2697,16 @@ def _corporation_ship_transfer_warp_prompt_from_args(args: argparse.Namespace) -
         raise HeadlessBridgeError("session-corp-transfer-warp", str(exc)) from exc
 
 
-def _collect_unowned_ship_prompt_from_args(args: argparse.Namespace) -> str:
+def _collect_unowned_ship_prompt_from_args(
+    args: argparse.Namespace,
+    *,
+    current_sector_id: int | None = None,
+) -> str:
     try:
-        return build_collect_unowned_ship_prompt(ship_id=args.ship_id)
+        sector_id = args.sector_id if args.sector_id is not None else current_sector_id
+        if sector_id is None:
+            raise ValueError("sector_id is required")
+        return build_collect_unowned_ship_prompt(ship_id=args.ship_id, sector_id=sector_id)
     except ValueError as exc:
         raise HeadlessBridgeError("session-collect-unowned-ship", str(exc)) from exc
 
@@ -3134,6 +3157,39 @@ async def _fetch_status_snapshot(
     }
 
 
+async def _fetch_status_snapshot_with_retries(
+    bridge: HeadlessBridgeProcess,
+    *,
+    timeout: float,
+    context: str,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError(context, "--event-timeout-seconds must be > 0")
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    errors: list[str] = []
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise HeadlessBridgeError(
+                context,
+                "timed out recovering status.snapshot",
+                payload={"errors": errors},
+            )
+        try:
+            return await _fetch_status_snapshot(bridge, timeout=min(remaining, 15.0))
+        except HeadlessBridgeError as exc:
+            errors.append(str(exc))
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 1.0:
+                raise HeadlessBridgeError(
+                    context,
+                    "timed out recovering status.snapshot",
+                    payload={"errors": errors},
+                ) from exc
+            await asyncio.sleep(min(2.0, max(0.25, remaining)))
+
+
 async def _run_player_task_prompt(
     bridge: HeadlessBridgeProcess,
     *,
@@ -3161,12 +3217,15 @@ async def _run_move_to_sector(
     sector_id: int,
     prompt: str,
     retries: int,
+    max_segments: int,
     timeout: float,
 ) -> dict[str, Any]:
     if sector_id <= 0:
         raise HeadlessBridgeError("session-move-to-sector", "--sector-id must be > 0")
     if retries < 0:
         raise HeadlessBridgeError("session-move-to-sector", "--step-retries must be >= 0")
+    if max_segments <= 0:
+        raise HeadlessBridgeError("session-move-to-sector", "--max-segments must be > 0")
 
     initial_status = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
     initial_summary = initial_status["summary"]
@@ -3179,24 +3238,57 @@ async def _run_move_to_sector(
             "final_status": initial_status,
         }
 
-    step_result = await _run_validated_player_step(
-        bridge,
-        prompt=prompt,
-        timeout=timeout,
-        retries=retries,
-        validate=lambda summary: summary.get("sector_id") == sector_id,
-    )
-    final_status = (
-        step_result.get("result", {}).get("status")
-        if isinstance(step_result.get("result"), dict)
-        else None
-    )
+    current_status = initial_status
+    current_summary = initial_summary
+    segments: list[dict[str, Any]] = []
+    stop_reason = "max_segments_reached"
+
+    for _ in range(max_segments):
+        if current_summary.get("sector_id") == sector_id:
+            stop_reason = "arrived"
+            break
+
+        start_summary = current_summary
+        step_result = await _run_validated_player_step(
+            bridge,
+            prompt=prompt,
+            timeout=timeout,
+            retries=retries,
+            validate=lambda summary: summary.get("sector_id") == sector_id,
+        )
+        final_attempt = step_result.get("result")
+        final_status = final_attempt.get("status") if isinstance(final_attempt, dict) else None
+        final_summary = final_status.get("summary") if isinstance(final_status, dict) else {}
+
+        progress_observed = final_summary.get("sector_id") != start_summary.get("sector_id")
+        segment = {
+            "step": step_result,
+            "start_sector": start_summary.get("sector_id"),
+            "end_sector": final_summary.get("sector_id"),
+            "start_warp": start_summary.get("warp_power"),
+            "end_warp": final_summary.get("warp_power"),
+            "progress_observed": progress_observed,
+            "task_completion_inferred": bool(progress_observed and not step_result.get("success")),
+        }
+        segments.append(segment)
+        if isinstance(final_status, dict):
+            current_status = final_status
+            current_summary = final_summary
+
+        if current_summary.get("sector_id") == sector_id:
+            stop_reason = "arrived"
+            break
+        if not progress_observed:
+            stop_reason = "no_progress"
+            break
+
     return {
         "prompt": prompt,
         "already_there": False,
         "initial_status": initial_status,
-        "result": step_result,
-        "final_status": final_status,
+        "segments": segments,
+        "stop_reason": stop_reason,
+        "final_status": current_status,
     }
 
 
@@ -3333,7 +3425,11 @@ async def _run_validated_player_step(
             timeout=watch_timeout,
         )
         deadline = asyncio.get_running_loop().time() + max(0.0, timeout - watch_timeout)
-        status_result = await _fetch_status_snapshot(bridge, timeout=min(timeout, 15.0))
+        status_result = await _fetch_status_snapshot_with_retries(
+            bridge,
+            timeout=min(timeout, 30.0),
+            context="session-move-to-sector",
+        )
         status_polls: list[dict[str, Any]] = []
         summary = status_result["summary"]
 
@@ -3345,7 +3441,11 @@ async def _run_validated_player_step(
             if remaining <= 0:
                 break
             await asyncio.sleep(min(2.0, remaining))
-            status_result = await _fetch_status_snapshot(bridge, timeout=min(remaining, 15.0))
+            status_result = await _fetch_status_snapshot_with_retries(
+                bridge,
+                timeout=min(remaining, 30.0),
+                context="session-move-to-sector",
+            )
             summary = status_result["summary"]
             status_polls.append(status_result)
 

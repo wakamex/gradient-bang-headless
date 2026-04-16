@@ -11,17 +11,18 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `867`
-- Personal ship credits: `7,549`
-- Personal ship warp: `212/500`
+- Personal ship sector: `3124` (latest observed while a long RO trade loop was still running)
+- Personal ship credits: `6,037`
+- Personal ship warp: `431/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
   - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
+  - `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `4892` with `485/500` warp on a live exploration task
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `309` known sectors, currently observed at rank `38`
-  - wealth: on the visible board, currently observed at rank `79` with visible row value `39,649`
-  - trading: on the visible board, currently observed at rank `28` with `233,228` total trade volume across `238` trades
+  - exploration: on the visible board at `313` known sectors, currently observed at rank `39`
+  - wealth: on the visible board, currently observed at rank `78` with visible row value `39,877`
+  - trading: on the visible board, currently observed at rank `28` with `239,348` total trade volume across `260` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
@@ -32,8 +33,9 @@ in the live Gradient Bang production game.
   - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
   - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
   - use cheap cargo as a wealth-board lever, because the live leaderboard currently values cargo at a flat `100` credits per unit
-  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now partly off-route in neutral space after a rescue attempt
-  - finish turning warp transfer plus corp movement into a reusable rescue workflow so exploration runs stop dying permanently on `0 warp`
+  - prefer fresh `1000`-credit autonomous probes over long rescue chains when the goal is exploration rank
+  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now being used as a rotating wealth/trading shuttle around sector `1413`
+  - keep trade loops chunked and observable; large blind route batches are productive but still too opaque to count as a clean bounded surface
 
 ## Timeline
 
@@ -436,6 +438,70 @@ in the live Gradient Bang production game.
   - exploration is still one good rescue away from the next visible rank
   - trading remains the steadiest board to grind with exact buy/sell orders
   - wealth is the most exploitable board mechanically because cheap cargo converts cash into leaderboard value more efficiently than profitable cargo does
+
+### Mega-Port Reset, Cheap Cargo Wealth, And Fresh Probes
+
+- Reworked `session-move-to-sector` into a segmented mover with status-retry recovery after the old exact mover kept timing out on long live travel while still advancing the ship.
+- Used that hardened mover to get the Kestrel from sector `867` back to mega-port sector `1413`.
+- Recharged to full there:
+  - warp `194 -> 500`
+  - credits `7,549 -> 6,937`
+- Queried live `ship.definitions` and confirmed the useful reset fact:
+  - `Autonomous Probe` costs only `1,000`
+  - `Autonomous Light Hauler` costs `5,000`
+- Revalidated the wealth-board exploit with a forced refresh instead of trusting stale cached rows:
+  - sector `1413` sells `Retro Organics` at `8`
+  - a full `30`-hold RO buy cost only `240`
+  - visible wealth jumped from rank `79` to rank `71`
+  - refreshed visible wealth row moved to `41,797`
+- That made the live rule concrete rather than inferred:
+  - cheap cargo really is the strongest near-term wealth lever
+  - the best wealth move at a good mega-port is often to park the Kestrel with the cheapest full hold available
+- Revisited unowned-ship collection immediately after that.
+- Fixed the client bug first:
+  - `session-collect-unowned-ship` now includes the sector instead of emitting `collect ... in sector`
+  - if `--sector-id` is omitted, it derives the current sector from live status
+- After that fix, the remaining failure was clearly upstream/live:
+  - the bot no longer asked for missing context
+  - it still failed on a real in-sector unowned Sparrow Scout in sector `1413`
+  - the task summary says it falls back to `salvage_collect` and gets `404 'Salvage not available'`
+- So the unowned-ship result is now sharper:
+  - one client-side prompt bug is fixed
+  - one real live collection-path mismatch still exists
+- Changed exploration strategy accordingly:
+  - buying fresh probes at a mega-port is a better exploration lever than spending the Kestrel on a long rescue chain
+- Bought a new corporation `Autonomous Probe` at sector `1413`.
+- The live purchase created:
+  - `gbheadless Auto Probe I`
+  - ship id `c28f283e-072d-4d63-86cb-ada75ad4ed48`
+  - seeded `500` credits on the new probe
+- Sent that fresh probe on a `10`-sector frontier task from `1413`.
+- The probe task proved the strategy even though the watcher still needs work:
+  - known sectors moved `309 -> 313`
+  - corporation sectors visited moved `303 -> 307`
+  - the probe reached sector `4892`
+  - the task was still active when the bounded loop returned
+- That tightened the exploration board materially:
+  - visible value moved to `313`
+  - the next visible row is now only `2` sectors away
+- Rebased the trading search from the new `1413` hub:
+  - best raw profit from the visible graph: `Quantum Foam` `1413 -> 2891`
+  - best trading volume per hop: `Retro Organics` `1413 -> 3124`
+- Started a long `session-trade-route-loop` on that one-hop RO route.
+- That produced a useful mixed finding:
+  - it clearly increased live trading volume from `233,468` to `239,348`
+  - it raised personal trades from `239` to `260`
+  - it kept the ship trading for real
+  - but it did not yield a prompt bounded final result object, so large blind batches are still too opaque to count as a clean unattended surface
+- Latest observed live state during that RO grind:
+  - Kestrel in sector `3124`
+  - `6,037` credits
+  - `30` RO on board
+  - `431/500` warp
+- Strategic conclusion from this round:
+  - fresh probes are now the best exploration lever available at a mega-port
+  - cheap RO holds are the best short-term wealth lever from `1413`
+  - short explicit RO chunks are the right trading tool, but the current large-batch route loop still needs better observability before it should be trusted for long unattended runs
 
 ## Personal Impressions
 

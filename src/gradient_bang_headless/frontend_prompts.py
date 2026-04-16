@@ -210,11 +210,13 @@ def build_corporation_ship_transfer_warp_task_description(
     )
 
 
-def build_collect_unowned_ship_prompt(*, ship_id: str) -> str:
+def build_collect_unowned_ship_prompt(*, ship_id: str, sector_id: int) -> str:
     normalized_ship_id = ship_id.strip()
     if not normalized_ship_id:
         raise ValueError("ship_id is required")
-    return f"collect unowned ship id {normalized_ship_id} in sector"
+    if sector_id <= 0:
+        raise ValueError("sector_id must be > 0")
+    return f"collect unowned ship id {normalized_ship_id} in sector {sector_id}"
 
 
 def build_engage_combat_prompt(*, player_name: str) -> str:
