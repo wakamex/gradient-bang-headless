@@ -65,11 +65,12 @@ Why:
 
 - `session-probe-frontier-loop` is now the highest-confidence compounding
   surface.
-- The probe-local branch from sector `2015` was real and yielded `+10` known
-  sectors and `+10` corporation sectors.
+- The probe-local branch chain `2015 -> 790 -> 2896 -> 3404 -> 3560` is real
+  and has now delivered four consecutive successful exploration pushes.
 - Latest strong exploration state:
-  - exploration `364`, visible rank `32`
-  - probe ended the last successful run at sector `790`
+  - exploration `397`, visible rank `29`
+  - next visible row is only `10` sectors above
+  - probe ended the last successful run at sector `3560`
 - Latest strong trading state:
   - trading `290872`, visible rank `27`
   - player ship is clean and liquid at sector `256`
@@ -79,8 +80,9 @@ Why:
 
 ## What To Do Next
 
-1. Run another `session-probe-frontier-loop`.
-2. Re-check leaderboard gaps.
+1. Keep running `session-probe-frontier-loop` while the next visible
+   exploration row remains cheaper than the next trading or wealth row.
+2. Force-refresh leaderboard state after meaningful exploration jumps.
 3. Only spend player-ship time on short exact trade batches if:
    - exploration stalls temporarily, or
    - a clearly superior legal route is available from the current position.

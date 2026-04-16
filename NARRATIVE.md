@@ -18,10 +18,10 @@ in the live Gradient Bang production game.
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
   - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-  - `gbheadless Auto Probe I` (`autonomous_probe`) in sector `790` with `368/500` warp after the latest successful frontier branch
+  - `gbheadless Auto Probe I` (`autonomous_probe`) in sector `3560` with `319/500` warp after three consecutive successful frontier branches
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `364` known sectors, currently observed at rank `32`
+  - exploration: on the visible board at `397` known sectors, currently observed at rank `29`
   - wealth: on the visible board, currently observed at rank `66` with visible row value `44,409`
   - trading: on the visible board, currently observed at rank `27` with `290,872` total trade volume across `322` trades
 - Completed quests:
@@ -40,7 +40,7 @@ in the live Gradient Bang production game.
   - prefer fresh `1000`-credit autonomous probes over long rescue chains when the goal is exploration rank
   - treat raw dangling map stubs as heuristics only; validate them before using them as exploration targets
   - treat the local `3883` probe pocket as saturated unless a future validated scan says otherwise
-  - the first recent confirmed local branch was `2015 -> [18, 422, 1767]`, and the probe-first loop is now the preferred way to find the next one
+  - the recent successful branch chain is `2015 -> 790 -> 2896 -> 3404 -> 3560`, and the probe-first loop is now the preferred way to keep extending it
   - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now being used as a rotating wealth/trading shuttle around sectors `1808` and `256`
   - keep trade loops chunked and observable; large blind route batches are productive but still too opaque to count as a clean bounded surface
 
@@ -305,6 +305,34 @@ in the live Gradient Bang production game.
   low-friction padding opportunity appears.
 - The client is finally starting to behave like a compounding strategy tool
   instead of a bundle of isolated probes and prompts.
+
+### Probe-First Exploration Climb
+
+- Leaned fully into the new long-term-ROI strategy instead of detouring into
+  trading or wealth as soon as one board moved.
+- Ran `session-probe-frontier-loop` three more times in a row from the active
+  probe position:
+  - `790 -> 2896`
+  - `2896 -> 3404`
+  - `3404 -> 3560`
+- Each branch delivered another `+11` to both known sectors and corporation
+  sectors, which is exactly what a compounding exploration engine should look
+  like:
+  - `364 -> 375`
+  - `375 -> 386`
+  - `386 -> 397`
+- The public board needed a forced refresh before it reflected the new state.
+  Once refreshed, exploration jumped from visible rank `32` to visible rank
+  `29`.
+- Trading and wealth did not move during this pass:
+  - trading held at `290,872`, rank `27`
+  - wealth held at `44,409`, rank `66`
+- That was useful strategically because it isolated the effect of the probe
+  loop. There is no ambiguity here: exploration is currently the cleanest
+  compounding lever in the whole client.
+- The next visible exploration target is now only `10` sectors above the
+  current row, while the immediate downside row is `2` sectors below. That is a
+  much better position than the trading and wealth gaps.
 
 - Added a first-class `session-trade-opportunities` command so the client can rank the current known-port graph instead of relying on one remembered grind route.
 - On the live graph from sector `3246`, the best visible routes split by goal:

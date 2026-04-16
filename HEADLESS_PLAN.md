@@ -247,15 +247,15 @@ Latest live state observed through the session surface:
 - personal ship warp power: `164`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `790` with `368/500` warp after the latest successful probe-frontier run
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `3560` with `319/500` warp after three consecutive successful probe-frontier runs
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- known sectors: `364`
-- corporation sectors visited: `358`
+- known sectors: `397`
+- corporation sectors visited: `391`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `364` known sectors, currently observed at rank `32`
+- visible exploration board entry: `397` known sectors, currently observed at rank `29`
 - visible trading board entry: `290872` total volume, currently observed at rank `27`
 - visible wealth board entry: currently observed at rank `66` with visible row value `44409`
 
@@ -309,6 +309,12 @@ Latest live progression proved:
   - completed one bounded branch run with `+10` known sectors and `+10`
     corporation sectors
   - finished the run with `gbheadless Auto Probe I` in sector `790`
+- then kept pushing the same surface instead of cashing out for quick wins:
+  - `790 -> 2896` for another `+11` known sectors
+  - `2896 -> 3404` for another `+11`
+  - `3404 -> 3560` for another `+11`
+  - visible exploration rank improved from `32` to `29` once the board was
+    force-refreshed
 - used the cleaner post-exploration player state to exact-sell `30`
   `neuro_symbolics` at sector `256`, raising credits to `10809` and trading
   volume to `290872`
