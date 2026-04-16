@@ -46,6 +46,12 @@ The intent is not just to scaffold code, but to keep a running record of:
 - Recovered the live state with `session-liquidate-cargo`:
   - sold `30` `Neuro Symbolics` at sector `4145` for `1,560` credits
   - stabilized the Kestrel at sector `4145`, `0/500` warp, `11,469` credits
+- Added `session-chat-watch` for rescue coordination:
+  - it can satisfy from recent `chat.history`
+  - or run as a future-only wait on live `chat.message` events
+- Proved live rescue progress:
+  - `NillaWafer` confirmed they are en route to sector `4145`
+  - the latest direct message gave an ETA of roughly `35` jumps
 - Current live state:
   - Kestrel at sector `4145`, `0/500` warp, empty cargo
   - surviving probe at sector `3341`, `3/500` warp

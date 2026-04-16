@@ -26,6 +26,8 @@ trading and wealth gains.
   move routed through a hostile garrison sector.
 - The next validated frontier from the probe pocket is `3341 -> ... -> 4438`,
   distance `13`.
+- `NillaWafer` has acknowledged the rescue request and reported they are en
+  route to sector `4145`.
 - Current visible ranks:
   - exploration `421`, rank `28`
   - trading `291,772`, rank `27`
@@ -40,6 +42,8 @@ trading and wealth gains.
 - Use `session-send-message` for rescue coordination:
   - broadcast when the goal is general warp assistance
   - direct message known helpers when a targeted ask is higher probability
+- Use `session-chat-watch` to monitor rescue replies without manually polling
+  full history dumps.
 - Keep the probe parked in sector `3341` until outside warp arrives.
 - Do not spend newly received rescue warp on anything except reopening
   exploration.

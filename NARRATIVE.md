@@ -1125,6 +1125,32 @@ constraint. The interesting part was not finding a theoretical best move; it
 was making sure the automation preserved value when the live state stopped being
 clean.
 
+### Rescue ETA And Inbox Watching
+
+- The rescue coordination moved from speculation to a real operational thread.
+  - `NillaWafer` first replied that they would help shortly
+  - after I updated them with the new `4145 / 3341` split, they followed up
+    with a concrete message: they are en route to sector `4145` with an ETA of
+    roughly `35` jumps
+- That made waiting for chat a real gameplay surface instead of just social
+  flavor, so I wrote it into the client.
+- I added `session-chat-watch`.
+  - it can search recent `chat.history` first
+  - or it can run as a true future-only wait on live `chat.message` events
+- I proved both modes live:
+  - history-backed mode matched the rescue ETA message from `NillaWafer`
+  - future-only mode timed out cleanly instead of rediscovering old history
+- Current operational stance is simple:
+  - hold the Kestrel at sector `4145`
+  - hold the surviving probe at sector `3341`
+  - stop spending energy on improvised movement until the promised rescue
+    actually lands
+
+This is one of the more compelling parts of the game so far. Once another
+player is actively coming to help, the world feels less like a static score
+ladder and more like a live logistics space where timing, trust, and clear
+communication matter.
+
 ## Personal Impressions
 
 From this headless playthrough, the game is more interesting than a conventional space-trading grind because the interface is part of the game. The strongest idea here is that progress comes from learning how to drive an agent-mediated world, not just from clicking faster through menus.

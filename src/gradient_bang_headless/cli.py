@@ -353,6 +353,19 @@ def build_parser() -> argparse.ArgumentParser:
     session_chat_history.add_argument("--max-rows", type=int)
     session_chat_history.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
+    session_chat_watch = sub.add_parser(
+        "session-chat-watch",
+        help="Connect a session, scan recent history, and then wait for the next matching chat.message",
+    )
+    _add_session_connect_args(session_chat_watch)
+    session_chat_watch.add_argument("--since-hours", type=int)
+    session_chat_watch.add_argument("--max-rows", type=int)
+    session_chat_watch.add_argument("--from-player")
+    session_chat_watch.add_argument("--to-player")
+    session_chat_watch.add_argument("--type", choices=["broadcast", "direct"])
+    session_chat_watch.add_argument("--contains")
+    session_chat_watch.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
     session_send_message = sub.add_parser(
         "session-send-message",
         help="Connect a session, send a broadcast or direct message via the proven send_message prompt contract, and wait for chat.message",
@@ -1626,6 +1639,48 @@ async def dispatch(args: argparse.Namespace) -> int:
                         "connect": connect_result,
                         "prompt": prompt,
                         "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-chat-watch":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            history_result = None
+            history_match = None
+            if args.since_hours is not None or args.max_rows is not None:
+                history_result = await bridge.get_chat_history(
+                    since_hours=args.since_hours,
+                    max_rows=args.max_rows,
+                    timeout=min(args.event_timeout_seconds, 30.0),
+                )
+                history_match = _match_chat_history(
+                    history_result,
+                    content_contains=args.contains,
+                    msg_type=args.type,
+                    from_name=args.from_player,
+                    to_name=args.to_player,
+                )
+            watch_result = None
+            if history_match is None:
+                watch_result = await _watch_chat_event(
+                    bridge,
+                    content_contains=args.contains,
+                    msg_type=args.type,
+                    from_name=args.from_player,
+                    to_name=args.to_player,
+                    timeout=args.event_timeout_seconds,
+                )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "history": history_result,
+                        "history_match": history_match,
                         "watch": watch_result,
                         "events": await bridge.drain_events(),
                     }
@@ -3593,10 +3648,6 @@ async def _watch_chat_message(
     if timeout <= 0:
         raise HeadlessBridgeError("session-send-message", "--event-timeout-seconds must be > 0")
 
-    normalized_content = content.strip()
-    normalized_type = _normalize_compare_text(msg_type)
-    normalized_to_name = _normalize_compare_text(to_name)
-
     deadline = asyncio.get_running_loop().time() + timeout
     tool_events: list[dict[str, Any]] = []
     matched_event = None
@@ -3624,15 +3675,13 @@ async def _watch_chat_message(
         if not isinstance(server_event, dict) or server_event.get("event") != "chat.message":
             continue
         payload = server_event.get("payload")
-        if not isinstance(payload, dict):
+        if not _chat_message_payload_matches(
+            payload,
+            content=content,
+            msg_type=msg_type,
+            to_name=to_name,
+        ):
             continue
-        if (payload.get("content") or "").strip() != normalized_content:
-            continue
-        if _normalize_compare_text(payload.get("type")) != normalized_type:
-            continue
-        if normalized_type == "direct" and normalized_to_name:
-            if not _matches_identifier(payload.get("to_name"), normalized_to_name):
-                continue
         matched_event = server_event
         break
 
@@ -3641,6 +3690,103 @@ async def _watch_chat_message(
         "matched": matched_event is not None,
         "chat_message": matched_event,
         "tool_events": tool_events,
+    }
+
+
+def _chat_message_payload_matches(
+    payload: dict[str, Any] | None,
+    *,
+    content: str | None = None,
+    content_contains: str | None = None,
+    msg_type: str | None = None,
+    from_name: str | None = None,
+    to_name: str | None = None,
+) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if content is not None and (payload.get("content") or "").strip() != content.strip():
+        return False
+    normalized_contains = _normalize_compare_text(content_contains)
+    if normalized_contains and normalized_contains not in _normalize_compare_text(payload.get("content")):
+        return False
+    normalized_type = _normalize_compare_text(msg_type)
+    if normalized_type and _normalize_compare_text(payload.get("type")) != normalized_type:
+        return False
+    if from_name and not _matches_identifier(payload.get("from_name"), from_name):
+        return False
+    if to_name and not _matches_identifier(payload.get("to_name"), to_name):
+        return False
+    return True
+
+
+def _match_chat_history(
+    history_result: dict[str, Any],
+    *,
+    content_contains: str | None,
+    msg_type: str | None,
+    from_name: str | None,
+    to_name: str | None,
+) -> dict[str, Any] | None:
+    payload = _extract_bridge_payload(history_result)
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    if not isinstance(messages, list):
+        return None
+    for message in messages:
+        if not _chat_message_payload_matches(
+            message,
+            content_contains=content_contains,
+            msg_type=msg_type,
+            from_name=from_name,
+            to_name=to_name,
+        ):
+            continue
+        return message
+    return None
+
+
+async def _watch_chat_event(
+    bridge: HeadlessBridgeProcess,
+    *,
+    content_contains: str | None,
+    msg_type: str | None,
+    from_name: str | None,
+    to_name: str | None,
+    timeout: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError("session-chat-watch", "--event-timeout-seconds must be > 0")
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    matched_event = None
+
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            event = await bridge.next_event(timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+
+        server_event = _extract_server_event(event)
+        if not isinstance(server_event, dict) or server_event.get("event") != "chat.message":
+            continue
+        payload = server_event.get("payload")
+        if not _chat_message_payload_matches(
+            payload,
+            content_contains=content_contains,
+            msg_type=msg_type,
+            from_name=from_name,
+            to_name=to_name,
+        ):
+            continue
+        matched_event = server_event
+        break
+
+    return {
+        "stop_reason": "chat.message" if matched_event is not None else "timeout",
+        "matched": matched_event is not None,
+        "chat_message": matched_event,
     }
 
 

@@ -30,6 +30,7 @@ This scaffold supports:
 - a first-class `session-corp-move-to-sector` helper for safe corporation-ship routing that avoids known foreign garrisons
 - a first-class `session-nearest-mega-port` helper for recharge-route discovery
 - a first-class `session-send-message` helper for live broadcast/direct rescue coordination with `chat.message` confirmation
+- a first-class `session-chat-watch` helper for rescue inbox monitoring from recent history or future live `chat.message` events
 - exact frontend prompt contracts for trade orders and ship purchase requests
 - first-class logistics helpers for warp recharge, credit transfer, and bidirectional warp transfer
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
@@ -139,6 +140,13 @@ gb-headless session-send-message \
   --access-token "$GB_ACCESS_TOKEN" \
   --type broadcast \
   --content "Distress signal from sector 3341. Need warp assistance to resume exploration."
+gb-headless session-chat-watch \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --from-player NillaWafer \
+  --type direct \
+  --to-player gbheadless6039 \
+  --event-timeout-seconds 120
 gb-headless session-ships \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
