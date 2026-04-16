@@ -622,6 +622,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_session_connect_args(session_purchase_corp_ship)
     session_purchase_corp_ship.add_argument("--ship-display-name", required=True)
+    session_purchase_corp_ship.add_argument("--count", type=int, default=1)
+    session_purchase_corp_ship.add_argument(
+        "--start-session",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_purchase_corp_ship.add_argument("--start-wait-seconds", type=float, default=1.0)
     session_purchase_corp_ship.add_argument("--wait-seconds", type=float, default=0.0)
     session_purchase_corp_ship.set_defaults(wait_for_task_finish=True)
     session_purchase_corp_ship.add_argument(
@@ -2100,23 +2107,48 @@ async def dispatch(args: argparse.Namespace) -> int:
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
             connect_result = await _connect_session_bridge(bridge, args, config)
-            action_result = await bridge.user_text_input(
-                prompt,
-                wait_seconds=args.wait_seconds,
+            start_result = None
+            if args.start_session:
+                start_result = await bridge.session_start(wait_seconds=args.start_wait_seconds)
+            initial_corporation = await bridge.get_my_corporation(
+                timeout=min(args.event_timeout_seconds, 15.0),
             )
+            known_ship_ids = _corporation_ship_id_set(initial_corporation)
+            purchases: list[dict[str, Any]] = []
             watch_result = None
-            if args.wait_for_task_finish:
-                watch_result = await _watch_player_task(
-                    bridge,
-                    wait_for_finish=True,
-                    timeout=args.event_timeout_seconds,
+            for purchase_index in range(args.count):
+                action_result = await bridge.user_text_input(
+                    prompt,
+                    wait_seconds=args.wait_seconds,
                 )
+                purchase_result: dict[str, Any] = {
+                    "purchase_index": purchase_index + 1,
+                    "prompt": prompt,
+                    "result": action_result,
+                }
+                if args.wait_for_task_finish:
+                    watch_result = await _watch_corporation_ship_purchase(
+                        bridge,
+                        known_ship_ids=known_ship_ids,
+                        timeout=args.event_timeout_seconds,
+                    )
+                    purchase_result["watch"] = watch_result
+                    new_ship_ids = watch_result.get("new_ship_ids") or []
+                    if new_ship_ids:
+                        known_ship_ids.update(
+                            ship_id for ship_id in new_ship_ids if isinstance(ship_id, str) and ship_id
+                        )
+                    if not watch_result.get("success"):
+                        purchases.append(purchase_result)
+                        break
+                purchases.append(purchase_result)
             print(
                 dump_json(
                     {
                         "connect": connect_result,
-                        "prompt": prompt,
-                        "result": action_result,
+                        "start": start_result,
+                        "initial_corporation": initial_corporation,
+                        "purchases": purchases,
                         "watch": watch_result,
                         "events": await bridge.drain_events(),
                     }
@@ -3474,6 +3506,93 @@ async def _watch_player_task(
         "task_finish": task_finish,
         "status": status_event,
         "post_watch_errors": post_watch_errors,
+    }
+
+
+def _extract_corporation_ships_from_bridge_result(result: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = _extract_bridge_payload(result)
+    corporation = payload.get("corporation")
+    if not isinstance(corporation, dict):
+        result_payload = payload.get("result")
+        if isinstance(result_payload, dict):
+            corporation = result_payload.get("corporation")
+    if not isinstance(corporation, dict):
+        return []
+    ships = corporation.get("ships")
+    if not isinstance(ships, list):
+        return []
+    return [ship for ship in ships if isinstance(ship, dict)]
+
+
+def _corporation_ship_id_set(result: dict[str, Any]) -> set[str]:
+    ship_ids: set[str] = set()
+    for ship in _extract_corporation_ships_from_bridge_result(result):
+        ship_id = ship.get("ship_id")
+        if isinstance(ship_id, str) and ship_id:
+            ship_ids.add(ship_id)
+    return ship_ids
+
+
+async def _watch_corporation_ship_purchase(
+    bridge: HeadlessBridgeProcess,
+    *,
+    known_ship_ids: set[str],
+    timeout: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError(
+            "session-purchase-corp-ship",
+            "--event-timeout-seconds must be > 0",
+        )
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    attempts = 0
+    errors: list[str] = []
+    last_result: dict[str, Any] | None = None
+
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        attempts += 1
+        try:
+            corporation_result = await bridge.get_my_corporation(timeout=min(remaining, 15.0))
+        except HeadlessBridgeError as exc:
+            errors.append(str(exc))
+            await asyncio.sleep(min(1.0, max(0.0, deadline - asyncio.get_running_loop().time())))
+            continue
+
+        last_result = corporation_result
+        ships = _extract_corporation_ships_from_bridge_result(corporation_result)
+        new_ships = [
+            ship
+            for ship in ships
+            if isinstance(ship.get("ship_id"), str) and ship.get("ship_id") not in known_ship_ids
+        ]
+        if new_ships:
+            return {
+                "success": True,
+                "stop_reason": "fleet_grew",
+                "attempts": attempts,
+                "new_ships": new_ships,
+                "new_ship_ids": [
+                    ship.get("ship_id")
+                    for ship in new_ships
+                    if isinstance(ship.get("ship_id"), str) and ship.get("ship_id")
+                ],
+                "corporation": corporation_result.get("server_event"),
+                "post_watch_errors": errors,
+            }
+        await asyncio.sleep(min(1.0, max(0.0, deadline - asyncio.get_running_loop().time())))
+
+    return {
+        "success": False,
+        "stop_reason": "timeout",
+        "attempts": attempts,
+        "new_ships": [],
+        "new_ship_ids": [],
+        "corporation": None if last_result is None else last_result.get("server_event"),
+        "post_watch_errors": errors,
     }
 
 
