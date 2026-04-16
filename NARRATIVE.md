@@ -1074,6 +1074,57 @@ probe loops. Once fuel scarcity becomes real, the world stops feeling like a
 solo optimization puzzle and starts feeling like a multiplayer logistics
 network where relationships and reputation matter.
 
+### Rescue-Pocket Trading, A Real Loop Bug, And The New Staging Sector
+
+- Rescue did not resolve immediately.
+  - `Filodox` replied publicly that they could not help refuel right now.
+  - that meant the highest-ROI path was still exploration-first, but with no
+    immediate outside warp to spend on it
+- I then asked the local rescue pocket what it could do instead of assuming it
+  was dead space.
+  - `session-trade-opportunities` from the stranded state showed a real short
+    route
+  - best local leg was `3328 -> 4145` on `Neuro Symbolics`
+  - best return leg was `4145 -> 3328` on `Quantum Foam`
+- That turned the pocket into a real secondary engine rather than a pure wait
+  state.
+- I used the existing deterministic wrapper and ran one bounded
+  `session-shuttle-loop`.
+- That exposed a real client bug instead of just a one-off play mistake.
+  - the loop loaded `30` `Neuro Symbolics` at sector `3328`
+  - it moved to sector `4145`
+  - it then honored `--min-warp` before unloading at the valid sell port
+  - result: the Kestrel hit `0` warp and stopped stranded with a full `NS`
+    hold
+- I recovered the live state with `session-liquidate-cargo`.
+  - sold the full hold in place at sector `4145`
+  - realized `1,560` credits from the cargo
+  - stabilized the ship back to empty holds and `11,469` credits
+- I then fixed the client so this specific failure mode does not repeat.
+  - `session-shuttle-loop` now allows in-place unloads even when warp has
+    already dropped below `--min-warp`
+  - low warp now blocks new movement, not value-preserving sells at the
+    destination port
+- Net live result from the fallback action:
+  - trading volume rose from `290,872` to `291,772`
+  - wealth improved from visible rank `68` to visible rank `64`
+  - exploration stayed at `421`, rank `28`
+  - the Kestrel is now stranded at port sector `4145` with `0/500` warp
+  - `gbheadless Auto Probe 1` remains in sector `3341` with `3/500` warp
+- I also updated rescue coordination to match the new live state.
+  - sent a direct message to `NillaWafer`
+  - the message included the new Kestrel sector `4145` and probe sector `3341`
+- Strategic conclusion after this pass:
+  - rescue is still the highest long-term ROI
+  - the `3328 <-> 4145` pocket is now a proven secondary trading/wealth lever
+  - automation quality matters most at stop boundaries, because that is where a
+    real partial win can still turn into a stranded mess
+
+This phase felt less like route grinding and more like dispatch under
+constraint. The interesting part was not finding a theoretical best move; it
+was making sure the automation preserved value when the live state stopped being
+clean.
+
 ## Personal Impressions
 
 From this headless playthrough, the game is more interesting than a conventional space-trading grind because the interface is part of the game. The strongest idea here is that progress comes from learning how to drive an agent-mediated world, not just from clicking faster through menus.

@@ -26,31 +26,39 @@ The intent is not just to scaffold code, but to keep a running record of:
 6. Keep the current leaderboard climb strategy explicit:
    - exploration remains the highest long-term ROI, but current live execution
      is rescue-gated rather than frontier-gated
-   - the active objective is to restore warp to the Kestrel/probe pair in
-     sector `3341`, then spend that fuel on the validated `4438` branch
-   - trading stays secondary while the account is fuel-starved
+   - the active objective is to restore warp to the `4145/3341` rescue pocket,
+     then spend that fuel on the validated `4438` branch
+   - trading stays secondary while the account is fuel-starved, but the local
+     `3328 <-> 4145` route is now a proven fallback
    - wealth stays tertiary and should not consume the last live warp units
 
 ## Latest Live Update
 
-- Added a safe `session-corp-move-to-sector` router that plans through the
-  known map and excludes known foreign garrison sectors.
-- Proved that safe router live by moving `gbheadless Auto Probe 1` from sector
-  `4356` back to sector `3341` without losing the hull.
-- Confirmed the new live bottleneck after that rescue:
-  - player ship at sector `3341` with `6/500` warp
-  - surviving probe at sector `3341` with `3/500` warp
-  - next validated frontier from that pocket is sector `4438`, distance `13`
-- Added a first-class `session-send-message` wrapper around the proven
-  prompt-mediated `send_message` surface.
-- Proved rescue communication live:
-  - broadcast contract succeeds when the session stays open long enough for the
-    tool call to complete
-  - `session-send-message` produced a real direct `chat.message` to `Filodox`
-- Updated live understanding of the blocker:
-  - exploration is still the best compounding board lever
-  - but fuel restoration and player coordination are now the highest-value
-    enabling surfaces
+- `session-trade-opportunities` exposed a real live fallback inside the rescue
+  pocket:
+  - `3328 -> 4145` on `Neuro Symbolics`
+  - `4145 -> 3328` on `Quantum Foam`
+- A bounded live `session-shuttle-loop` then exposed a real control bug:
+  - the loop could honor `--min-warp` before unloading at the sell port
+  - that stranded the Kestrel at sector `4145` with cargo still loaded
+- Fixed that bug so `session-shuttle-loop` now allows in-place unloads even
+  when warp has already fallen below `--min-warp`.
+- Recovered the live state with `session-liquidate-cargo`:
+  - sold `30` `Neuro Symbolics` at sector `4145` for `1,560` credits
+  - stabilized the Kestrel at sector `4145`, `0/500` warp, `11,469` credits
+- Current live state:
+  - Kestrel at sector `4145`, `0/500` warp, empty cargo
+  - surviving probe at sector `3341`, `3/500` warp
+  - exploration `421`, rank `28`
+  - trading `291,772`, rank `27`
+  - wealth `42,569`, rank `64`
+- Rescue coordination is still active:
+  - `Filodox` publicly replied that they could not help refuel
+  - sent an updated direct rescue request to `NillaWafer`
+- Updated blocker summary:
+  - rescue/fuel is still the primary gate on exploration
+  - the `3328 <-> 4145` pocket is now a proven secondary fallback for trading
+    and wealth when local warp becomes available
 
 ## Current Milestones
 

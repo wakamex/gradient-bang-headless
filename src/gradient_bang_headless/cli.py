@@ -5975,6 +5975,7 @@ async def _run_shuttle_loop(
         total_cargo_units = _total_cargo_units(current_summary)
         home_units = _cargo_units(current_summary, home_commodity)
         away_units = _cargo_units(current_summary, away_commodity)
+        loaded_commodity = _loaded_route_commodity(current_summary, (home_commodity, away_commodity))
 
         if total_cargo_units > home_units + away_units:
             stop_reason = "foreign_cargo_present"
@@ -5985,11 +5986,14 @@ async def _run_shuttle_loop(
         if max_cycles is not None and len(cycle_results) >= max_cycles:
             stop_reason = "max_cycles_reached"
             break
-        if current_warp is not None and current_warp < min_warp:
+        can_unload_in_place = False
+        if current_sector == home_sector and loaded_commodity == away_commodity:
+            can_unload_in_place = _port_allows_sell(current_summary.get("port_code"), away_commodity)
+        elif current_sector == away_sector and loaded_commodity == home_commodity:
+            can_unload_in_place = _port_allows_sell(current_summary.get("port_code"), home_commodity)
+        if current_warp is not None and current_warp < min_warp and not can_unload_in_place:
             stop_reason = "min_warp_reached"
             break
-
-        loaded_commodity = _loaded_route_commodity(current_summary, (home_commodity, away_commodity))
 
         if current_sector == home_sector:
             if loaded_commodity == away_commodity:

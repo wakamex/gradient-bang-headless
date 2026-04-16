@@ -372,7 +372,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   around those exact trade steps. It is useful for reproducing and hardening
   the live shuttle path, but the current production-reliable route surface is
   still the explicit `session-load-cargo -> session-move-to-sector ->
-  session-liquidate-cargo` sequence.
+  session-liquidate-cargo` sequence. It now also guarantees that an in-place
+  unload at the destination port is attempted before `--min-warp` stops
+  further movement.
 - `session-auto-trade-loop` is the preferred execution surface once a goal is
   clear. It uses `session-trade-opportunities` internally, picks the current
   best visible route for `wealth`, `trading`, or raw `profit`, then runs the
