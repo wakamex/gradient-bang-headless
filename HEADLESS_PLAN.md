@@ -228,22 +228,22 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `1808`
-- personal ship credits: `9369`
-- personal ship warp power: `197`
+- personal ship sector: `256`
+- personal ship credits: `10179`
+- personal ship warp power: `182`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `3336` with `421/500` warp after a partial frontier run
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `1244` with `420/500` warp and an active explore task after a partial frontier run
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
-- cargo: `30` Retro Organics
+- cargo: empty
 - fighters: `300`
 - known sectors: `344`
 - corporation sectors visited: `338`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
 - visible exploration board entry: `344` known sectors, currently observed at rank `34`
-- visible trading board entry: `271312` total volume, currently observed at rank `27`
-- visible wealth board entry: currently observed at rank `64` with visible row value `45969`
+- visible trading board entry: `278242` total volume, currently observed at rank `28`
+- visible wealth board entry: currently observed at rank `69` with visible row value `43779`
 
 Latest live progression proved:
 
@@ -556,9 +556,14 @@ Interpretation:
     port instead of assuming a full hold is always available
   - keep using `session-wealth-loadout` only for quick board padding at a cheap
     current port, not as the main wealth-growth engine
-  - keep the current `1808 <-> 256` shuttle in short exact batches; it is
-    still the best proven combined wealth/trading lever, but the `QF` side can
-    stock out and temporarily cap the route
+  - keep the current `1808 <-> 256` shuttle in short exact batches; the proven
+    production shape is now the explicit four-step `load -> move -> liquidate ->
+    repeat` sequence, not the new all-in-one helper yet
+  - prefer `QF` on `256 -> 1808` and `NS` on `1808 -> 256` when the goal is the
+    best combined push on wealth plus trading volume
+  - treat `session-shuttle-loop` as a hardening target, not the canonical live
+    route surface, until its mid-route sell/load recovery matches the low-level
+    commands
   - harden corp-task watching and large-batch trade looping so the productive live paths are also operationally clean
   - either make unowned-ship collection work or document it as a live bot/path
     bug with clear reproduction
@@ -583,6 +588,30 @@ Latest production-proven additions and findings:
   - the bounded corp watcher still returned before a clean finish
   - exploration board value stayed flat at `344`, so ship movement and visible
     board updates are still not synchronous
+- added a first pass at `session-shuttle-loop` plus stock-aware route buys:
+  - it is useful for reproducing where the live route still degrades
+  - but it is not yet the recommended production trading surface
+- proved the stronger live trading contract directly with exact low-level steps:
+  - bought `30` `QF` at sector `256`
+  - moved `256 -> 1808`
+  - sold `30` `QF` at `31`
+  - bought `30` `NS` at sector `1808`
+  - moved `1808 -> 256`
+  - sold `30` `NS` at `43`
+- that complete `QF/NS` shuttle left the live account at:
+  - sector `256`
+  - `10179` credits
+  - `182` warp
+  - empty cargo
+- latest visible board gaps after the completed shuttle:
+  - exploration `344`, rank `34`, tied with the next visible row
+  - trading `278242`, rank `28`, only `1067` behind the next visible row
+  - wealth `43779`, rank `69`, only `171` behind the next visible row
+- pushed the probe again after the personal shuttle:
+  - `gbheadless Auto Probe I` moved from sector `3336` to sector `1244`
+  - the board had not refreshed upward yet
+  - the ship still carried a live `current_task_id`, reinforcing that corp
+    movement often outruns the bounded watcher and the public leaderboard refresh
 
 ## User-Facing Surface Tracking
 

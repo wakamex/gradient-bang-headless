@@ -740,6 +740,58 @@ in the live Gradient Bang production game.
   `344`, which is a useful reminder that corp movement progress and visible
   leaderboard movement are related but not synchronous.
 
+### Manual Exact Shuttle Beats The New Full-Loop Helper
+
+- I tried to promote the live `1808 <-> 256` shuttle into a first-class
+  `session-shuttle-loop`.
+- The result was useful but not clean enough yet:
+  - the new loop correctly handled stock-aware exact buys and route recovery
+  - but on the live player path it still stalled around mid-route sell/load
+    transitions
+  - it was good enough to expose the real failure boundary, but not good enough
+    to become the new canonical trading surface
+- The durable path on production right now is still the low-level exact sequence:
+  - `session-load-cargo`
+  - `session-move-to-sector`
+  - `session-liquidate-cargo`
+- I used that exact four-leg sequence to run a full live `QF/NS` shuttle:
+  - bought `30` `QF` at sector `256`
+  - moved to sector `1808`
+  - sold `30` `QF` at `31`
+  - bought `30` `NS` at sector `1808`
+  - moved to sector `256`
+  - sold `30` `NS` at `43`
+- That full exact shuttle pushed the account to:
+  - sector `256`
+  - `10179` credits
+  - `182/500` warp
+  - empty cargo
+- The public boards after the finished shuttle were:
+  - exploration `344`, visible rank `34`, tied with the next visible row
+  - trading `278242`, visible rank `28`, only `1067` behind the next visible row
+  - wealth `43779`, visible rank `69`, only `171` behind the next visible row
+- The strategic takeaway is sharper now:
+  - a single full `QF/NS` manual shuttle is the best current combined push
+    toward wealth and trading
+  - the buy/move/sell primitives are now strong enough that route progress no
+    longer depends on vague natural-language batches
+  - the unfinished work is packaging those exact legs into a fully durable loop
+    without losing the clean behavior of the individual steps
+
+### Probe Progress Is Real Before The Board Notices
+
+- I also sent `gbheadless Auto Probe I` back out with a fresh `10`-sector
+  explore task.
+- The same pattern held again:
+  - the bounded watcher returned on task start, not task finish
+  - but the ship itself moved from sector `3336` to sector `1244`
+  - the probe still has an active `current_task_id`
+- The exploration board had not moved yet at the time of the last refresh, so
+  the practical rule stands:
+  - probe movement is still the cheapest exploration lever
+  - but leaderboard confirmation lags behind corp-ship state, so the operator
+    should trust `ships.list` first and board refreshes second
+
 ## Personal Impressions
 
 From this headless playthrough, the game is more interesting than a conventional space-trading grind because the interface is part of the game. The strongest idea here is that progress comes from learning how to drive an agent-mediated world, not just from clicking faster through menus.
