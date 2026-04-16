@@ -11,18 +11,18 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `3124` (latest observed while a long RO trade loop was still running)
-- Personal ship credits: `6,037`
-- Personal ship warp: `431/500`
+- Personal ship sector: `3124`
+- Personal ship credits: `6,187`
+- Personal ship warp: `377/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
   - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-  - `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `4892` with `485/500` warp on a live exploration task
+  - `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `2984` with `473/500` warp
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `313` known sectors, currently observed at rank `39`
-  - wealth: on the visible board, currently observed at rank `78` with visible row value `39,877`
-  - trading: on the visible board, currently observed at rank `28` with `239,348` total trade volume across `260` trades
+  - exploration: on the visible board at `319` known sectors, currently observed at rank `37`
+  - wealth: on the visible board, currently observed at rank `69` with visible row value `42,787`
+  - trading: on the visible board, currently observed at rank `28` with `245,438` total trade volume across `281` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
@@ -31,6 +31,7 @@ in the live Gradient Bang production game.
   - use repeated corporation-probe frontier loops as the primary exploration engine
   - use port-code-aware, map-backed route selection instead of naive price comparisons
   - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
+  - use `session-wealth-loadout` when the ship is parked on a cheap legal seller and the immediate goal is wealth-board rank instead of realized profit
   - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
   - use cheap cargo as a wealth-board lever, because the live leaderboard currently values cargo at a flat `100` credits per unit
   - prefer fresh `1000`-credit autonomous probes over long rescue chains when the goal is exploration rank
@@ -502,6 +503,37 @@ in the live Gradient Bang production game.
   - fresh probes are now the best exploration lever available at a mega-port
   - cheap RO holds are the best short-term wealth lever from `1413`
   - short explicit RO chunks are the right trading tool, but the current large-batch route loop still needs better observability before it should be trusted for long unattended runs
+
+### Wealth Loadout And Fine-Grained Rank Pushes
+
+- Added a first-class `session-wealth-loadout` command so the client can turn
+  "cheap cargo is good for wealth" into a bounded reusable surface instead of a
+  remembered manual trick.
+- Proved it live from sector `3124`, where the Kestrel was already parked:
+  - live port state was `SBS`
+  - the helper chose `Quantum Foam` automatically as the cheapest legal sell
+    at that port
+  - it bought `30` units at `23` credits each for `690` total credits
+  - task watching stayed clean and ended on a real `task.finish`
+- That one bounded command moved the public boards materially:
+  - wealth improved from rank `74` to rank `69`
+  - trading volume also ticked up from `244,748` to `245,438`
+- That is a better wealth surface than the earlier broad statement "buy cheap
+  cargo somewhere." It is now explicit, bounded, and keyed to the ship's real
+  current location instead of assuming a remembered mega-port.
+- Used the now-cheaper exploration target next:
+  - before the push, the next visible exploration row was only `1` sector away
+  - a single bounded `session-corp-explore-loop` run moved
+    `gbheadless Auto Probe I` from `1808` to `2984`
+  - known sectors improved `318 -> 319`
+  - corporation sectors visited improved `312 -> 313`
+  - visible exploration improved from rank `38` to rank `37`
+- Strategy shift after those two commands:
+  - exploration is still the cheapest board to advance one row at a time
+  - `session-wealth-loadout` is now the cleanest way to force a quick wealth
+    jump without committing to a long trade cycle
+  - trading remains the slowest board to move because it needs larger absolute
+    volume gains than the other two
 
 ## Personal Impressions
 

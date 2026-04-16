@@ -26,7 +26,7 @@ The intent is not just to scaffold code, but to keep a running record of:
 6. Keep the current leaderboard climb strategy explicit:
    - exploration through repeated `session-corp-explore-loop` frontier runs
    - trading through the best visible route from `session-auto-trade-loop --goal trading`
-   - wealth through the best visible route from `session-auto-trade-loop --goal wealth` plus existing corp assets
+   - wealth through `session-wealth-loadout` at the cheapest legal current port, plus existing corp assets
    - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
    - short-term operational constraint: the personal ship is now warp-limited, so exploration is the cheapest current lever until the ship reaches a recharge path again
 
@@ -152,6 +152,7 @@ Implemented:
 - a first-class `session-trade-opportunities` helper for ranking visible trade routes by profit and travel cost
 - map-backed route ranking using the live `session-map` graph instead of hop-delta approximations
 - a first-class `session-auto-trade-loop` that chooses a route by goal and runs it
+- a first-class `session-wealth-loadout` that converts current-port credits into immediate wealth-board value through the cheapest legal full hold
 - sell-recovery cycle accounting so successful trade-order cleanups count as real completed cycles
 - first-class logistics helpers for warp recharge and credit transfers
 - a deterministic `session-trade-route-loop` built from bounded watched tasks,
@@ -217,22 +218,22 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `3124` (latest observed while a long RO trade loop was still running)
-- personal ship credits: `6037`
-- personal ship warp power: `431`
+- personal ship sector: `3124`
+- personal ship credits: `6187`
+- personal ship warp power: `377`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `4892` with `485/500` warp
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `2984` with `473/500` warp
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
-- cargo: `30` Retro Organics
+- cargo: `30` Quantum Foam
 - fighters: `300`
-- known sectors: `313`
-- corporation sectors visited: `307`
+- known sectors: `319`
+- corporation sectors visited: `313`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `313` known sectors, currently observed at rank `39`
-- visible trading board entry: `239348` total volume, currently observed at rank `28`
-- visible wealth board entry: currently observed at rank `78` with visible row value `39877`
+- visible exploration board entry: `319` known sectors, currently observed at rank `37`
+- visible trading board entry: `245438` total volume, currently observed at rank `28`
+- visible wealth board entry: currently observed at rank `69` with visible row value `42787`
 
 Latest live progression proved:
 
@@ -430,6 +431,19 @@ Latest live progression proved:
   - trading volume `233468 -> 239348`
   - personal trades `239 -> 260`
   - the loop still did not return a prompt bounded final result cleanly enough to count as a dependable unattended surface
+- added `session-wealth-loadout` as a first-class current-port wealth helper
+- proved it live at sector `3124`:
+  - the helper selected `Quantum Foam` automatically as the cheapest legal
+    commodity sold there
+  - it bought a full `30`-hold load at `23` credits each for `690` credits
+    total
+  - visible wealth jumped `74 -> 69`
+  - visible trading volume also moved `244748 -> 245438`
+- followed that with one bounded probe push using `session-corp-explore-loop`:
+  - known sectors `318 -> 319`
+  - corporation sectors visited `312 -> 313`
+  - `gbheadless Auto Probe I` moved `1808 -> 2984`
+  - visible exploration improved `38 -> 37`
 
 Interpretation:
 
@@ -444,7 +458,7 @@ Interpretation:
   documenting which website actions still degrade when driven headlessly
 - the next concrete live-game push is now:
   - keep using fresh `1000`-credit probes from a mega-port when the goal is exploration rank
-  - keep using cheap RO holds intentionally when the goal is wealth rank
+  - keep using `session-wealth-loadout` whenever the goal is immediate wealth rank and the ship is parked on a cheap legal seller
   - keep the `1413 <-> 3124` RO route as the current best live trading-volume grind
   - harden corp-task watching and large-batch trade looping so the productive live paths are also operationally clean
   - either make unowned-ship collection work or document it as a live bot/path
