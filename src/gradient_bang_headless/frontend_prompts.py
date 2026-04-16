@@ -61,3 +61,33 @@ def build_corporation_ship_purchase_prompt(*, ship_display_name: str) -> str:
     if not display_name:
         raise ValueError("ship_display_name is required")
     return f"I'd like to purchase a {display_name} as a new corporation ship"
+
+
+def build_corporation_ship_task_prompt(
+    *,
+    ship_name: str,
+    task_description: str,
+    ship_id: str | None = None,
+) -> str:
+    normalized_ship_name = ship_name.strip()
+    normalized_task_description = task_description.strip()
+    if not normalized_ship_name:
+        raise ValueError("ship_name is required")
+    if not normalized_task_description:
+        raise ValueError("task_description is required")
+
+    ship_ref = normalized_ship_name
+    if ship_id:
+        normalized_ship_id = ship_id.strip()
+        if not normalized_ship_id:
+            raise ValueError("ship_id must be non-empty when provided")
+        ship_ref = f"{ship_ref} [{normalized_ship_id[:6]}]"
+
+    return f"Have my corporation ship {ship_ref} {normalized_task_description}"
+
+
+def build_collect_unowned_ship_prompt(*, ship_id: str) -> str:
+    normalized_ship_id = ship_id.strip()
+    if not normalized_ship_id:
+        raise ValueError("ship_id is required")
+    return f"collect unowned ship id {normalized_ship_id} in sector"

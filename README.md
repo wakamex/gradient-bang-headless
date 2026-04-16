@@ -113,6 +113,9 @@ gb-headless session-ship-definitions \
 gb-headless session-quest-status \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-claim-all-rewards \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN"
 gb-headless session-trade-order \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -126,6 +129,17 @@ gb-headless session-purchase-ship \
   --ship-display-name "Kestrel Courier" \
   --replace-ship-id "<current-ship-id>" \
   --replace-ship-name "Sparrow Scout"
+gb-headless session-corp-task \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --ship-name "gbheadless Auto Probe 1" \
+  --ship-id eab4cd \
+  --task-description 'travel to sector 1908 and stop there.' \
+  --wait-for-finish
+gb-headless session-collect-unowned-ship \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --ship-id "<unowned-ship-uuid>"
 gb-headless loop \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -162,13 +176,23 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `session-task-events`, `session-map`, `session-chat-history`,
   `session-ships`, `session-ship-definitions`, `session-corporation`,
   `session-quest-status`, `session-assign-quest`, `session-claim-reward`,
-  `session-cancel-task`, `session-skip-tutorial`, `session-user-text`,
-  `session-trade-order`, `session-purchase-ship`, and `session-watch`
-  follow the frontend's real message -> event pattern and are preferred over
-  hand-written `session-message` payloads.
+  `session-claim-all-rewards`, `session-cancel-task`,
+  `session-skip-tutorial`, `session-user-text`, `session-trade-order`,
+  `session-purchase-ship`, and `session-watch` follow the frontend's real
+  message -> event pattern and are preferred over hand-written
+  `session-message` payloads.
+- `session-claim-all-rewards` is a headless convenience wrapper that batches
+  currently claimable quest rewards. It is built on the real
+  `claim-step-reward` session action and is not counted as a separate website
+  parity surface.
+- `session-corp-task` is a headless convenience wrapper for live corp-ship
+  tasking. It uses regular player text, then waits on real `task.start` and
+  `task.finish` events for the named corporation ship.
 - `session-trade-order`, `session-purchase-ship`, and
   `session-purchase-corp-ship` send the exact strings the upstream React
   client builds in `TradePanel.tsx` and `ShipDetails.tsx`.
+- `session-collect-unowned-ship` sends the exact string the upstream React
+  client builds in `SectorUnownedSubPanel.tsx`.
 - `loop` is the supported path for bot-driven gameplay. It polls
   `status.snapshot`, tracks quest state, and reprompts on idle instead of
   relying on one-off shell snippets.
@@ -196,9 +220,16 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - the live `daily` path is now proven to reach `bot_ready` and receive gameplay
   frames such as `status.snapshot`, `quest.status`, `map.local`, `ports.list`,
   `chat.history`, `ships.list`, and `ship.definitions`.
-- the remaining blocker is control quality on long bot-driven loops, not
-  transport reachability. The bot can still stall or drift on trading
-  objectives even when the session surface is healthy.
+- the remaining blocker is no longer transport reachability. The current work
+  is surface-by-surface: make task-driven actions wait on real lifecycle
+  events, and document where exact website prompts still degrade when driven
+  headlessly.
+- the live player path is now proven through both checked-in tutorial quest
+  lines, including corporation creation, corporation ship purchase, and a real
+  corporation-ship task completion.
+- the exact website unowned-ship prompt is implemented, but in current live
+  testing it routes to `salvage_collect` and fails with `404 Salvage not
+  available` even when `status.snapshot` reports unowned ships in sector `472`.
 - `signup-and-start` is the proven public bootstrap flow:
   `register -> confirm -> login -> user_character_create -> user_character_list -> start`.
 - `signup-and-start` is a practical two-pass CLI flow:

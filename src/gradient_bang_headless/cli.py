@@ -10,6 +10,8 @@ from .config import HeadlessConfig, update_dotenv
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
 from .frontend_prompts import (
     build_corporation_ship_purchase_prompt,
+    build_corporation_ship_task_prompt,
+    build_collect_unowned_ship_prompt,
     build_ship_purchase_prompt,
     build_trade_order_prompt,
 )
@@ -248,6 +250,14 @@ def build_parser() -> argparse.ArgumentParser:
     session_claim_reward.add_argument("--step-id", required=True)
     session_claim_reward.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
+    session_claim_all_rewards = sub.add_parser(
+        "session-claim-all-rewards",
+        help="Connect a session and claim all currently available quest step rewards",
+    )
+    _add_session_connect_args(session_claim_all_rewards)
+    session_claim_all_rewards.add_argument("--quest-code")
+    session_claim_all_rewards.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
     session_cancel_task = sub.add_parser(
         "session-cancel-task",
         help="Connect a session, cancel a task, and wait for task.history",
@@ -303,6 +313,26 @@ def build_parser() -> argparse.ArgumentParser:
     _add_session_connect_args(session_purchase_corp_ship)
     session_purchase_corp_ship.add_argument("--ship-display-name", required=True)
     session_purchase_corp_ship.add_argument("--wait-seconds", type=float, default=0.0)
+
+    session_corp_task = sub.add_parser(
+        "session-corp-task",
+        help="Connect a session, task a corporation ship via player text, and watch for task lifecycle events",
+    )
+    _add_session_connect_args(session_corp_task)
+    session_corp_task.add_argument("--ship-name", required=True)
+    session_corp_task.add_argument("--ship-id")
+    session_corp_task.add_argument("--task-description", required=True)
+    session_corp_task.add_argument("--wait-for-finish", action="store_true")
+    session_corp_task.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
+    session_collect_unowned_ship = sub.add_parser(
+        "session-collect-unowned-ship",
+        help="Connect a session, send the exact website collect-unowned-ship prompt, and wait for the ship to appear in owned ships",
+    )
+    _add_session_connect_args(session_collect_unowned_ship)
+    session_collect_unowned_ship.add_argument("--ship-id", required=True)
+    session_collect_unowned_ship.add_argument("--event-timeout-seconds", type=float, default=45.0)
+    session_collect_unowned_ship.add_argument("--poll-interval-seconds", type=float, default=3.0)
 
     session_watch = sub.add_parser(
         "session-watch",
@@ -950,6 +980,68 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-claim-all-rewards":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            initial_status = await bridge.wait_for_quest_status(timeout=args.event_timeout_seconds)
+            initial_events = await bridge.drain_events()
+            latest_quest_status = _last_quest_status_event(
+                [initial_status.get("server_event"), *initial_events]
+            )
+            claimable_steps = _collect_claimable_reward_steps(
+                latest_quest_status,
+                quest_code=args.quest_code,
+            )
+            claimed_steps: list[dict[str, Any]] = []
+            latest_claimable = claimable_steps
+
+            for step in claimable_steps:
+                action_result = await bridge.claim_step_reward(
+                    quest_id=step["quest_id"],
+                    step_id=step["step_id"],
+                    timeout=args.event_timeout_seconds,
+                )
+                action_events = await bridge.drain_events()
+                latest_quest_status = _last_quest_status_event(
+                    [action_result.get("server_event"), *action_events],
+                    fallback=latest_quest_status,
+                )
+                _mark_reward_claimed(
+                    latest_quest_status,
+                    quest_id=step["quest_id"],
+                    step_id=step["step_id"],
+                )
+                claimed_steps.append(
+                    {
+                        "quest_code": step["quest_code"],
+                        "quest_id": step["quest_id"],
+                        "step_id": step["step_id"],
+                        "step_index": step["step_index"],
+                        "step_name": step["step_name"],
+                        "reward_credits": step["reward_credits"],
+                    }
+                )
+                latest_claimable = _collect_claimable_reward_steps(
+                    latest_quest_status,
+                    quest_code=args.quest_code,
+                )
+
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "quest_code_filter": args.quest_code,
+                        "claimable_steps": claimable_steps,
+                        "claimed_steps": claimed_steps,
+                        "remaining_claimable_steps": latest_claimable,
+                        "final_quests": _quest_status_summary(latest_quest_status),
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-cancel-task":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
@@ -1061,6 +1153,57 @@ async def dispatch(args: argparse.Namespace) -> int:
                         "connect": connect_result,
                         "prompt": prompt,
                         "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-corp-task":
+        prompt = _corporation_ship_task_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(prompt)
+            watch_result = await _watch_corporation_task(
+                bridge,
+                ship_id=args.ship_id,
+                ship_name=args.ship_name,
+                wait_for_finish=args.wait_for_finish,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-collect-unowned-ship":
+        prompt = _collect_unowned_ship_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(prompt)
+            watch_result = await _wait_for_owned_ship(
+                bridge,
+                ship_id=args.ship_id,
+                timeout=args.event_timeout_seconds,
+                poll_interval_seconds=args.poll_interval_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -1471,6 +1614,293 @@ def _corporation_ship_purchase_prompt_from_args(args: argparse.Namespace) -> str
         raise HeadlessBridgeError("session-purchase-corp-ship", str(exc)) from exc
 
 
+def _corporation_ship_task_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_corporation_ship_task_prompt(
+            ship_name=args.ship_name,
+            ship_id=args.ship_id,
+            task_description=args.task_description,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-corp-task", str(exc)) from exc
+
+
+def _collect_unowned_ship_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_collect_unowned_ship_prompt(ship_id=args.ship_id)
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-collect-unowned-ship", str(exc)) from exc
+
+
+def _extract_server_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    if event.get("event") != "server_message":
+        return None
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return None
+    if data.get("frame_type") != "event":
+        return None
+    return data
+
+
+def _normalize_compare_text(value: str | None) -> str:
+    return (value or "").strip().casefold()
+
+
+def _matches_identifier(candidate: str | None, wanted: str | None) -> bool:
+    normalized_candidate = _normalize_compare_text(candidate)
+    normalized_wanted = _normalize_compare_text(wanted)
+    if not normalized_candidate or not normalized_wanted:
+        return False
+    return (
+        normalized_candidate == normalized_wanted
+        or normalized_candidate.startswith(normalized_wanted)
+        or normalized_wanted.startswith(normalized_candidate)
+    )
+
+
+def _task_event_matches(
+    server_event: dict[str, Any],
+    *,
+    ship_id: str | None,
+    ship_name: str | None,
+    required_scope: str | None = None,
+) -> bool:
+    payload = server_event.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    if required_scope and payload.get("task_scope") != required_scope:
+        return False
+    if ship_id and not _matches_identifier(payload.get("ship_id"), ship_id):
+        return False
+    if ship_name and _normalize_compare_text(payload.get("ship_name")) != _normalize_compare_text(ship_name):
+        return False
+    return True
+
+
+def _select_ship_from_ships_event(
+    server_event: dict[str, Any] | None,
+    *,
+    ship_id: str | None,
+    ship_name: str | None,
+) -> dict[str, Any] | None:
+    if not isinstance(server_event, dict):
+        return None
+    payload = server_event.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    ships = payload.get("ships")
+    if not isinstance(ships, list):
+        return None
+    for ship in ships:
+        if not isinstance(ship, dict):
+            continue
+        if ship_id and _matches_identifier(ship.get("ship_id"), ship_id):
+            return ship
+        if ship_name and _normalize_compare_text(ship.get("ship_name")) == _normalize_compare_text(ship_name):
+            return ship
+    return None
+
+
+def _select_ship_from_corporation_event(
+    server_event: dict[str, Any] | None,
+    *,
+    ship_id: str | None,
+    ship_name: str | None,
+) -> dict[str, Any] | None:
+    if not isinstance(server_event, dict):
+        return None
+    payload = server_event.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    corporation = payload.get("corporation")
+    if not isinstance(corporation, dict):
+        result = payload.get("result")
+        if isinstance(result, dict):
+            corporation = result.get("corporation")
+    if not isinstance(corporation, dict):
+        return None
+    ships = corporation.get("ships")
+    if not isinstance(ships, list):
+        return None
+    for ship in ships:
+        if not isinstance(ship, dict):
+            continue
+        ship_candidate_name = ship.get("name") or ship.get("ship_name")
+        if ship_id and _matches_identifier(ship.get("ship_id"), ship_id):
+            return ship
+        if ship_name and _normalize_compare_text(ship_candidate_name) == _normalize_compare_text(ship_name):
+            return ship
+    return None
+
+
+async def _watch_corporation_task(
+    bridge: HeadlessBridgeProcess,
+    *,
+    ship_id: str | None,
+    ship_name: str,
+    wait_for_finish: bool,
+    timeout: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError("session-corp-task", "--event-timeout-seconds must be > 0")
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    task_start: dict[str, Any] | None = None
+    task_finish: dict[str, Any] | None = None
+    latest_quest_status: dict[str, Any] | None = None
+
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            event = await bridge.next_event(timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+
+        server_event = _extract_server_event(event)
+        if not isinstance(server_event, dict):
+            continue
+
+        event_name = server_event.get("event")
+        if event_name == "quest.status":
+            latest_quest_status = server_event
+            continue
+        if event_name == "task.start" and _task_event_matches(
+            server_event,
+            ship_id=ship_id,
+            ship_name=ship_name,
+            required_scope="corp_ship",
+        ):
+            task_start = server_event
+            if not wait_for_finish:
+                break
+            continue
+        if event_name == "task.finish" and _task_event_matches(
+            server_event,
+            ship_id=ship_id,
+            ship_name=ship_name,
+            required_scope="corp_ship",
+        ):
+            task_finish = server_event
+            break
+
+    stop_reason = "timeout"
+    if task_finish is not None:
+        stop_reason = "task_finish"
+    elif task_start is not None:
+        stop_reason = "task_start"
+
+    post_watch_errors: list[str] = []
+    ships_event = None
+    corporation_event = None
+
+    try:
+        ships_result = await bridge.get_my_ships(timeout=15.0)
+    except HeadlessBridgeError as exc:
+        post_watch_errors.append(str(exc))
+    else:
+        ships_event = ships_result.get("server_event")
+
+    try:
+        corporation_result = await bridge.get_my_corporation(timeout=15.0)
+    except HeadlessBridgeError as exc:
+        post_watch_errors.append(str(exc))
+    else:
+        corporation_event = corporation_result.get("server_event")
+
+    result: dict[str, Any] = {
+        "wait_for_finish": wait_for_finish,
+        "stop_reason": stop_reason,
+        "task_started": task_start is not None,
+        "task_finished": task_finish is not None,
+        "task_start": task_start,
+        "task_finish": task_finish,
+        "matched_ship": _select_ship_from_ships_event(
+            ships_event,
+            ship_id=ship_id,
+            ship_name=ship_name,
+        ),
+        "matched_corporation_ship": _select_ship_from_corporation_event(
+            corporation_event,
+            ship_id=ship_id,
+            ship_name=ship_name,
+        ),
+        "post_watch_errors": post_watch_errors,
+    }
+    if latest_quest_status is not None:
+        result["quests"] = _quest_status_summary(latest_quest_status)
+        result["latest_quest_status"] = latest_quest_status
+    return result
+
+
+async def _wait_for_owned_ship(
+    bridge: HeadlessBridgeProcess,
+    *,
+    ship_id: str,
+    timeout: float,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError(
+            "session-collect-unowned-ship",
+            "--event-timeout-seconds must be > 0",
+        )
+    if poll_interval_seconds <= 0:
+        raise HeadlessBridgeError(
+            "session-collect-unowned-ship",
+            "--poll-interval-seconds must be > 0",
+        )
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    polls = 0
+    poll_errors: list[str] = []
+    latest_ships_event = None
+
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        polls += 1
+        try:
+            ships_result = await bridge.get_my_ships(timeout=min(15.0, max(5.0, remaining)))
+        except HeadlessBridgeError as exc:
+            poll_errors.append(str(exc))
+        else:
+            latest_ships_event = ships_result.get("server_event")
+            matched_ship = _select_ship_from_ships_event(
+                latest_ships_event,
+                ship_id=ship_id,
+                ship_name=None,
+            )
+            if matched_ship is not None:
+                return {
+                    "success": True,
+                    "stop_reason": "ship_visible",
+                    "polls": polls,
+                    "poll_errors": poll_errors,
+                    "matched_ship": matched_ship,
+                }
+
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(poll_interval_seconds, remaining))
+
+    return {
+        "success": False,
+        "stop_reason": "timeout",
+        "polls": polls,
+        "poll_errors": poll_errors,
+        "matched_ship": _select_ship_from_ships_event(
+            latest_ships_event,
+            ship_id=ship_id,
+            ship_name=None,
+        ),
+    }
+
+
 def _require_access_token(raw: str | None, config: HeadlessConfig) -> str:
     token = raw or config.access_token
     if not token:
@@ -1515,6 +1945,159 @@ def _count_login_characters(login_result: dict[str, Any]) -> int:
     if not isinstance(characters, list):
         return 0
     return sum(1 for item in characters if isinstance(item, dict))
+
+
+def _last_quest_status_event(
+    events: list[Any],
+    *,
+    fallback: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    latest = fallback
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") != "server_message":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        if data.get("event") != "quest.status":
+            continue
+        latest = data
+    return latest
+
+
+def _collect_claimable_reward_steps(
+    quest_status_event: dict[str, Any] | None,
+    *,
+    quest_code: str | None = None,
+) -> list[dict[str, Any]]:
+    if not isinstance(quest_status_event, dict):
+        return []
+
+    payload = quest_status_event.get("payload")
+    if not isinstance(payload, dict):
+        return []
+
+    quests = payload.get("quests")
+    if not isinstance(quests, list):
+        return []
+
+    filtered_code = (quest_code or "").strip() or None
+    claimable: list[dict[str, Any]] = []
+    for quest in quests:
+        if not isinstance(quest, dict):
+            continue
+        current_code = quest.get("code")
+        if filtered_code and current_code != filtered_code:
+            continue
+        quest_id = quest.get("quest_id")
+        if not isinstance(quest_id, str) or not quest_id:
+            continue
+        completed_steps = quest.get("completed_steps")
+        if not isinstance(completed_steps, list):
+            continue
+        for step in completed_steps:
+            if not isinstance(step, dict):
+                continue
+            if not step.get("completed") or step.get("reward_claimed"):
+                continue
+            step_id = step.get("step_id")
+            if not isinstance(step_id, str) or not step_id:
+                continue
+            claimable.append(
+                {
+                    "quest_code": current_code,
+                    "quest_id": quest_id,
+                    "step_id": step_id,
+                    "step_index": step.get("step_index"),
+                    "step_name": step.get("name"),
+                    "reward_credits": step.get("reward_credits"),
+                }
+            )
+
+    claimable.sort(
+        key=lambda item: (
+            str(item.get("quest_code") or ""),
+            int(item["step_index"]) if isinstance(item.get("step_index"), int) else 0,
+            str(item.get("step_id") or ""),
+        )
+    )
+    return claimable
+
+
+def _mark_reward_claimed(
+    quest_status_event: dict[str, Any] | None,
+    *,
+    quest_id: str,
+    step_id: str,
+) -> None:
+    if not isinstance(quest_status_event, dict):
+        return
+
+    payload = quest_status_event.get("payload")
+    if not isinstance(payload, dict):
+        return
+
+    quests = payload.get("quests")
+    if not isinstance(quests, list):
+        return
+
+    for quest in quests:
+        if not isinstance(quest, dict):
+            continue
+        if quest.get("quest_id") != quest_id:
+            continue
+        completed_steps = quest.get("completed_steps")
+        if not isinstance(completed_steps, list):
+            return
+        for step in completed_steps:
+            if not isinstance(step, dict):
+                continue
+            if step.get("step_id") == step_id:
+                step["reward_claimed"] = True
+                return
+
+
+def _quest_status_summary(quest_status_event: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(quest_status_event, dict):
+        return []
+
+    payload = quest_status_event.get("payload")
+    if not isinstance(payload, dict):
+        return []
+
+    quests = payload.get("quests")
+    if not isinstance(quests, list):
+        return []
+
+    summary: list[dict[str, Any]] = []
+    for quest in quests:
+        if not isinstance(quest, dict):
+            continue
+        current_step = quest.get("current_step")
+        current_step_name = None
+        if isinstance(current_step, dict):
+            current_step_name = current_step.get("name")
+        summary.append(
+            {
+                "quest_code": quest.get("code"),
+                "quest_id": quest.get("quest_id"),
+                "status": quest.get("status"),
+                "current_step_index": quest.get("current_step_index"),
+                "current_step_name": current_step_name,
+                "claimable_reward_steps": len(
+                    _collect_claimable_reward_steps(
+                        {
+                            "payload": {
+                                "quests": [quest],
+                            }
+                        }
+                    )
+                ),
+            }
+        )
+    return summary
 
 
 def _select_login_character(

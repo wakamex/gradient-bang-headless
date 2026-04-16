@@ -21,8 +21,8 @@ The intent is not just to scaffold code, but to keep a running record of:
    website itself uses fixed prompt strings.
 4. Improve the long-objective loop so it can recover from bot drift and
    distinguish real progress from chatter.
-5. Continue pushing the live character toward the Kestrel purchase and beyond,
-   but only through regular-player capabilities.
+5. Keep extending post-tutorial live-player surfaces from the website:
+   corporation growth, unowned-ship collection, salvage, rename, and combat.
 
 ## Local Vs Live Constraint
 
@@ -112,6 +112,8 @@ Implemented:
 - first-class session commands for status, ports, map, chat history, ships,
   ship definitions, corporation data, task events, and quest status
 - exact frontend prompt contracts for trade orders and ship purchase requests
+- first-class corp-ship tasking with real `task.start`/`task.finish` watching
+- exact frontend prompt contract for collecting an unowned ship in the sector
 - a reusable `loop` runner for long bot-driven objectives
 
 Production-proven on `daily`:
@@ -135,89 +137,227 @@ Diagnostic-only today:
 
 Current blocker:
 
-- long bot-driven objectives still drift or stall
-- the transport is healthy, but the controller loop needs stronger stateful
-  guidance than a single broad objective prompt
+- the live player path is healthy through bootstrap, tutorials, corp setup,
+  corp ship purchase, and corp ship tasking
+- the next blockers are surface-specific:
+  - some bot-driven actions still need task-aware waiting, not fire-and-close prompts
+  - the exact unowned-ship collect prompt currently routes to `salvage_collect`
+    and fails with `404 Salvage not available` even when `status.snapshot`
+    reports `unowned_ships` in the current sector
+  - the generic loop still has no fleet-growth target, so successful corp-ship
+    purchases can still end as `duration_elapsed`
 
 ### Current Live State
 
 Latest live state observed through the session surface:
 
-- character: `gbheadless19873`
-- ship: `sparrow_scout`
-- sector: `1333`
-- ship credits: `12,665`
+- character: `gbheadless6039`
+- corporation: `gbheadless6039 corp`
+- personal ship: `gbheadless Kestrel` (`kestrel_courier`)
+- personal ship sector: `472`
+- personal ship credits: `471`
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `1908`
+- corp ship: `gbheadless Auto Probe 20260416-0312` (`autonomous_probe`) in sector `1695`
 - cargo: empty
-- fighters: `200`
-- warp power: `356`
-- tutorial step: `Purchase a kestrel`
-- corporation tutorial step: `Create or join a corporation`
+- fighters: `300`
+- warp power: `500`
+- `tutorial`: completed
+- `tutorial_corporations`: completed
 
 Latest live progression proved:
 
-- moved headlessly from sector `1942` to the mega-port in sector `1413`
-- sent the exact website ship-purchase prompt for `Kestrel Courier`
-- production bot calculated the remaining shortfall as `2,335` credits
-- generic trade loop then drifted off the mega-port and stalled without earning
-  the missing credits
+- created a fresh live account and completed the public bootstrap flow
+- completed the full starter tutorial and claimed all rewards
+- bought the first personal `Kestrel Courier`
+- accepted and completed the corporation tutorial contract
+- created a live corporation and purchased the first corporation probe
+- sent a first-class corp task to `gbheadless Auto Probe 1 [eab4cd]`
+- observed real `task.start` and `task.finish` for the corp probe
+- claimed the final corporation tutorial reward
+- purchased a second corporation probe beyond the tutorial
+- sent a first-class corp task to `gbheadless Auto Probe 20260416-0312 [3450da]`
+- observed real `task.start` and `task.finish` for that second post-tutorial fleet task
+- implemented the exact frontend unowned-ship prompt surface and reproduced a
+  current live failure mode against real unowned-ship IDs at sector `472`
 
 Interpretation:
 
 - the live player path is working
-- the next bottleneck is not auth or transport
-- the remaining work is stronger control over repeated trade/purchase behavior
+- the next bottleneck is no longer tutorial progression
+- the remaining work is expanding reliable post-tutorial surfaces and
+  documenting which website actions still degrade when driven headlessly
 
-## Endpoint Coverage
+## User-Facing Surface Tracking
 
-Canonical source of truth: [upstream/API.md](/code/gradient/upstream/API.md)
+Source of truth for this section:
 
-- total documented edge-function endpoints: `60`
-- first-class canonical endpoints currently covered in the headless client: `20`
-- direct first-class coverage: about `33%`
+- the website frontend in `upstream/client/app/src`
+- the public bootstrap/session path used by a normal player
+- exact prompt contracts that the website itself sends through `user-text-input`
 
-Covered today:
+This tracker is intentionally different from the full edge-function count in
+[upstream/API.md](/code/gradient/upstream/API.md). We care about regular-player
+website parity, not direct coverage of every server endpoint.
 
-- public control plane:
-  - `register`
-  - `login`
-  - `user_character_list`
-  - `user_character_create`
-  - `start`
-  - `leaderboard_resources`
-- trusted gameplay edge functions:
-  - `my_status`
-  - `move`
-  - `plot_course`
-  - `local_map_region`
-  - `list_known_ports`
-  - `trade`
-  - `recharge_warp_power`
-  - `purchase_fighters`
-  - `ship_definitions`
-  - `ship_purchase`
-  - `quest_assign`
-  - `quest_status`
-  - `quest_claim_reward`
-  - `events_since`
+Current first-class regular-player coverage:
 
-Covered indirectly, but not counted in the `20`:
+- tracked user-facing surfaces: `35`
+- first-class implemented in this client: `24`
+- coverage: about `69%`
 
-- generic raw edge-function calls through `call` and `game-call`
-- session-semantic commands such as `session-start`, `session-status`,
-  `session-known-ports`, `session-map`, `session-chat-history`,
-  `session-ships`, `session-ship-definitions`, `session-corporation`,
-  `session-quest-status`, `session-assign-quest`, `session-claim-reward`,
-  `session-cancel-task`, `session-skip-tutorial`, `session-user-text`,
-  `session-trade-order`, `session-purchase-ship`, and `loop`
-- Supabase verify-link confirmation through `confirm-url`
+### Public Bootstrap And Control Plane (`7/7`)
+
+- `[x]` account registration
+- `[x]` email confirmation flow
+- `[x]` login
+- `[x]` character list
+- `[x]` character creation
+- `[x]` start session via `/start`
+- `[x]` leaderboard resources read
+
+### Frontend Semantic Session Actions (`12/19`)
+
+Implemented:
+
+- `[x]` `start`
+- `[x]` `get-my-status`
+- `[x]` `get-known-ports`
+- `[x]` `get-task-history`
+- `[x]` `get-my-map`
+- `[x]` `get-my-ships`
+- `[x]` `get-my-corporation`
+- `[x]` `get-ship-definitions`
+- `[x]` `cancel-task`
+- `[x]` `get-chat-history`
+- `[x]` `assign-quest`
+- `[x]` `claim-step-reward`
+
+Headless convenience wrappers, not counted separately:
+
+- `session-claim-all-rewards`
+
+Not first-class yet:
+
+- `[ ]` `combat-action`
+- `[ ]` `say-text`
+- `[ ]` `say-text-dismiss`
+- `[ ]` `dump-llm-context`
+- `[ ]` `dump-task-context`
+- `[ ]` `set-voice`
+- `[ ]` `set-personality`
+
+### Frontend Prompt-Driven Surfaces (`5/9`)
+
+Implemented:
+
+- `[x]` freeform `user-text-input`
+- `[x]` trade order prompt contract from `TradePanel.tsx`
+- `[x]` personal ship purchase prompt contract from `ShipDetails.tsx`
+- `[x]` corporation ship purchase prompt contract from `ShipDetails.tsx`
+- `[x]` collect unowned ship prompt contract from `SectorUnownedSubPanel.tsx`
+
+Not first-class yet:
+
+- `[ ]` engage combat with named player
+- `[ ]` garrison update prompt contract
+- `[ ]` collect salvage prompt contract
+- `[ ]` rename ship prompt contract
 
 Interpretation:
 
-- the headless client already covers the public bootstrap path cleanly
-- it also covers a small but useful slice of secret-backed gameplay RPCs for
-  reverse-mapping and diagnostics
-- the actual product gap is not scaffolding, but access: the regular-player
-  gameplay path still depends on a working public session transport
+- the public bootstrap flow is fully covered
+- the typed session surface is mostly covered
+- the biggest remaining gap is prompt-driven gameplay control, especially
+  combat, salvage, garrison management, renaming, and long-running trade loops
+- generic `session-user-text` can still reach more of the live game than the
+  first-class count shows, but it is not counted as durable surface coverage
+  unless the website contract has been written into the client
+
+## Auth-Protected Edge Endpoints
+
+These are tracked separately because the shipped client will not implement them
+as direct edge-function surfaces. They remain useful for reverse-mapping server
+behavior, but they are out of scope for normal-player parity.
+
+When a regular-player equivalent exists, the correct shipped target is:
+
+- public JWT/bootstrap flow
+- direct session message
+- exact frontend prompt contract
+
+### App-Token Endpoints (`46`, out of scope as direct client targets)
+
+Core gameplay lifecycle and reads:
+
+- `join`
+- `my_status`
+- `move`
+- `character_info`
+- `ship_definitions`
+- `list_user_ships`
+- `local_map_region`
+- `plot_course`
+- `path_with_region`
+- `list_known_ports`
+- `events_since`
+- `event_query`
+
+Corporation:
+
+- `corporation_list`
+- `corporation_info`
+- `my_corporation`
+- `corporation_create`
+- `corporation_join`
+- `corporation_leave`
+- `corporation_kick`
+- `corporation_rename`
+- `corporation_regenerate_invite_code`
+
+Economy, ships, salvage, messaging:
+
+- `trade`
+- `transfer_credits`
+- `transfer_warp_power`
+- `bank_transfer`
+- `recharge_warp_power`
+- `purchase_fighters`
+- `dump_cargo`
+- `salvage_collect`
+- `ship_purchase`
+- `ship_sell`
+- `ship_rename`
+- `send_message`
+
+Combat and garrison:
+
+- `combat_initiate`
+- `combat_action`
+- `combat_tick`
+- `combat_leave_fighters`
+- `combat_collect_fighters`
+- `combat_disband_garrison`
+- `combat_set_garrison_mode`
+
+Quests and tasks:
+
+- `quest_assign`
+- `quest_status`
+- `quest_claim_reward`
+- `task_lifecycle`
+- `task_cancel`
+
+Test / local utility:
+
+- `test_reset`
+
+### Admin-Secret Endpoints (`5`, out of scope)
+
+- `character_create`
+- `character_modify`
+- `character_delete`
+- `regenerate_ports`
+- `reset_ports`
 
 ## Planned Commit Sequence
 
