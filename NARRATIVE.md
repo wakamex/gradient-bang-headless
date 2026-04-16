@@ -11,25 +11,25 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `3246`
-- Personal ship credits: `5,809`
-- Personal ship warp: `74/500`
+- Personal ship sector: `3236`
+- Personal ship credits: `6,379`
+- Personal ship warp: `44/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `2695`
+  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `3792`
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `229` known sectors, currently observed at rank `43`
-  - wealth: on the visible board, currently observed at rank `84`
-  - trading: on the visible board, currently observed at rank `29` with `199,028` total trade volume across `208` trades
+  - exploration: on the visible board at `240` known sectors, currently observed at rank `43`
+  - wealth: on the visible board, currently observed at rank `83`
+  - trading: on the visible board, currently observed at rank `29` with `204,638` total trade volume across `214` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
 - Current frontier:
   - keep all three leaderboard categories visible while climbing deeper into each board
   - use repeated corporation-probe frontier loops as the primary exploration engine
-  - treat route selection as a first-class problem instead of relying on one remembered path
-  - use short-hop Quantum Foam loops for wealth and short-hop Neuro Symbolics loops for trade-volume pushes when the personal ship is nearby
+  - use map-backed route selection instead of hop-delta guesses
+  - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route
   - treat exact price-constrained sell orders as the strongest current trading surface, stronger than vague `sell all` prompts
   - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`
   - revisit corporation-hauler trading and the unowned-ship mismatch after the current exploration/trading push
@@ -275,6 +275,42 @@ in the live Gradient Bang production game.
 - The important strategic change is that the client is no longer just "good at one route."
   It can now rank the live visible market graph and choose different loops for different leaderboard goals.
 
+### Map-Backed Auto Trading
+
+- The first version of `session-trade-opportunities` still had one weak assumption:
+  it estimated inter-port distance from the difference in each port's `hops_from_start`.
+- The live `session-map` surface exposed a better foundation.
+  It returns the actual sector graph with lanes and `hops_from_center`, which is enough to run real shortest-path calculations.
+- Reworked the trade helper to use that graph.
+  That immediately corrected one of the earlier conclusions:
+  - the better wealth route from sector `3246` was not the short local QF hop
+  - it was `3786 -> 3236` on Quantum Foam, because the graph showed the inter-port distance was only `1`
+- Added `session-auto-trade-loop` as the next durable layer:
+  - `--goal wealth` picks the best current profit-per-hop route
+  - `--goal trading` picks the best current trade-volume-per-hop route
+  - `--goal profit` picks the best raw-profit route
+- Proved the wealth path live first:
+  - `session-auto-trade-loop --goal wealth --max-cycles 2`
+  - selected `3786 -> 3236` on Quantum Foam
+  - finished cleanly at `6,229` credits and `59` warp
+  - improved wealth from rank `84` to rank `83`
+- Then proved the trading path enough to find the next weakness:
+  - `session-auto-trade-loop --goal trading --max-cycles 2`
+  - selected `3236 -> 318` on Neuro Symbolics
+  - it bought the full hold and moved correctly, but stopped dirty on the sell edge case again
+- That led to one more useful hardening pass:
+  - added a final exact trade-order sell recovery inside the route loop
+  - used the current dirty hold as the live test case
+  - the loop successfully unwound the stuck position, emptied the hold, and improved credits instead of leaving the ship stranded with cargo
+- Current effect of that work:
+  - route choice is now goal-driven and graph-backed
+  - wealth is up to rank `83`
+  - trading remains at rank `29`, but total volume rose again to `204,638`
+- The exploration side kept compounding in parallel:
+  - one probe run needed a retry with `--connect-timeout-ms 40000` after Daily connected but the browser bridge timed out on its ready gate
+  - after the retry, the probe finished another `11` new sectors: `2695 -> 3792`
+  - total known sectors rose to `240`
+
 ### Post-Tutorial Findings
 
 - Asked the live bot for further normal-player goals after finishing the tutorial lines.
@@ -307,5 +343,7 @@ The auth fix made a practical difference to how the game feels from the automati
 The exact trade-order discovery made the economy feel smarter than the earlier fixed-route grind. Once the bot started interpreting "sell 9 at at least 40" as "go find the best reachable market and do it," the trading layer felt less like rote waypoint replay and more like giving the game a concrete commercial intent.
 
 The route-ranking pass made the game feel more legible. Once the headless client could distinguish "best profit route" from "best trade-volume route," the leaderboard chase stopped feeling like random grinding and started feeling like running a small logistics desk with different KPIs.
+
+The map-backed version sharpened that feeling even more. As soon as shortest-path distance replaced the earlier hop-delta guess, some of the "obvious" routes stopped being optimal, which made the game feel less like memorizing folklore and more like doing real operations work against an imperfect but understandable world model.
 
 Overall impression: the core idea is strong. It feels novel, a little weird in a good way, and substantially more interesting than the average browser game because the player is effectively learning how to operate an in-world organization through language and automation.

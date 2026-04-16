@@ -25,8 +25,8 @@ The intent is not just to scaffold code, but to keep a running record of:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
    - exploration through repeated `session-corp-explore-loop` frontier runs
-   - trading through the best visible route from `session-trade-opportunities`, currently short-hop `318 -> 3246` Neuro Symbolics for volume
-   - wealth through the best visible profit route, currently short-hop `318 -> 3246` Quantum Foam plus existing corp assets
+   - trading through the best visible route from `session-auto-trade-loop --goal trading`
+   - wealth through the best visible route from `session-auto-trade-loop --goal wealth` plus existing corp assets
    - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
 
 ## Current Milestones
@@ -149,6 +149,8 @@ Implemented:
 - first-class corp-ship tasking with real `task.start`/`task.finish` watching
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
 - a first-class `session-trade-opportunities` helper for ranking visible trade routes by profit and travel cost
+- map-backed route ranking using the live `session-map` graph instead of hop-delta approximations
+- a first-class `session-auto-trade-loop` that chooses a route by goal and runs it
 - first-class logistics helpers for warp recharge and credit transfers
 - a deterministic `session-trade-route-loop` built from bounded watched tasks,
   with per-step retries after the first long production run exposed transient
@@ -202,21 +204,21 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `3246`
-- personal ship credits: `5809`
-- personal ship warp power: `74`
+- personal ship sector: `3236`
+- personal ship credits: `6379`
+- personal ship warp power: `44`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `2695`
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `3792`
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- known sectors: `229`
-- corporation sectors visited: `224`
+- known sectors: `240`
+- corporation sectors visited: `235`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `229` known sectors, currently observed at rank `43`
-- visible trading board entry: `199028` total volume, currently observed at rank `29`
-- visible wealth board entry: currently observed at rank `84`
+- visible exploration board entry: `240` known sectors, currently observed at rank `43`
+- visible trading board entry: `204638` total volume, currently observed at rank `29`
+- visible wealth board entry: currently observed at rank `83`
 
 Latest live progression proved:
 
@@ -311,20 +313,32 @@ Latest live progression proved:
   - raw profit
   - profit per hop
   - trade volume per hop
+- upgraded `session-trade-opportunities` to use the live map graph for real
+  shortest-path distances between ports
+- added `session-auto-trade-loop` so route choice can be goal-driven instead
+  of manually transcribed
 - used that helper to split the live trading strategy by leaderboard goal:
   - best raw profit from the visible graph: `3236 -> 907` Neuro Symbolics
-  - best current wealth route from the ship's location: `318 -> 3246` Quantum Foam
-  - best current trading-volume route from the ship's location: `318 -> 3246` Neuro Symbolics
-- proved both short-hop routes live:
-  - `4` QF cycles pushed wealth rank `91 -> 86`
-  - `3` NS cycles pushed trading rank `31 -> 29` and wealth rank `86 -> 84`
+  - best current wealth route after graph correction: `3786 -> 3236` Quantum Foam
+  - best current trading-volume route after graph correction: `3236 -> 318` Neuro Symbolics
+- proved the new goal-driven surface live:
+  - `session-auto-trade-loop --goal wealth --max-cycles 2` selected `3786 -> 3236`
+    Quantum Foam and pushed wealth rank `84 -> 83`
+  - `session-auto-trade-loop --goal trading --max-cycles 2` selected
+    `3236 -> 318` Neuro Symbolics and exposed the remaining sell edge case
+- hardened the route loop again by adding a final exact trade-order sell
+  recovery step when the loop would otherwise stop with a loaded hold
+- used that recovery path live to unwind the stuck NS hold and improve cash
+  plus visible trading volume instead of leaving the ship dirty
 - pushed exploration further with two more probe runs:
   - `2554 -> 1399`
   - `1399 -> 2695`
+- plus one more run after the transport retry:
+  - `2695 -> 3792`
 - current confirmed live board state:
   - exploration rank `43`
   - trading rank `29`
-  - wealth rank `84`
+  - wealth rank `83`
 
 Interpretation:
 
@@ -335,9 +349,9 @@ Interpretation:
 - the next concrete live-game push is now:
   - keep compounding exploration with cheap probe frontier loops until the
     current visible graph yields a better corp-expansion opportunity
-  - turn `session-trade-opportunities` into a more autonomous route runner or
-    price-constrained trading loop, so route choice becomes data-driven rather
-    than manual
+  - keep validating and hardening `session-auto-trade-loop` until the remaining
+    sell edge case disappears and the route runner can stay clean without
+    manual cleanup
   - use realized trade profits to reach the next meaningful hull upgrade while
     keeping the account climbing on wealth instead of hovering just above the
     visible-board floor

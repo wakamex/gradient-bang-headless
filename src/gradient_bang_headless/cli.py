@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 import sys
+from collections import deque
 from typing import Any
 
 from .config import HeadlessConfig, repo_root, update_dotenv
@@ -198,7 +199,35 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
     )
     session_trade_opportunities.add_argument("--limit", type=int, default=10)
+    session_trade_opportunities.add_argument("--map-max-hops", type=int, default=30)
+    session_trade_opportunities.add_argument("--map-max-sectors", type=int, default=500)
     session_trade_opportunities.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
+    session_auto_trade_loop = sub.add_parser(
+        "session-auto-trade-loop",
+        help="Connect a session, rank visible routes for a leaderboard goal, and run the chosen deterministic trade loop",
+    )
+    _add_session_connect_args(session_auto_trade_loop)
+    session_auto_trade_loop.add_argument(
+        "--goal",
+        choices=["wealth", "trading", "profit"],
+        default="wealth",
+    )
+    session_auto_trade_loop.add_argument(
+        "--commodity",
+        choices=["quantum_foam", "retro_organics", "neuro_symbolics"],
+        action="append",
+        dest="commodities",
+        default=[],
+    )
+    session_auto_trade_loop.add_argument("--limit", type=int, default=10)
+    session_auto_trade_loop.add_argument("--map-max-hops", type=int, default=30)
+    session_auto_trade_loop.add_argument("--map-max-sectors", type=int, default=500)
+    session_auto_trade_loop.add_argument("--max-cycles", type=int)
+    session_auto_trade_loop.add_argument("--target-credits", type=int)
+    session_auto_trade_loop.add_argument("--min-warp", type=int, default=50)
+    session_auto_trade_loop.add_argument("--step-retries", type=int, default=1)
+    session_auto_trade_loop.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
     session_task_history = sub.add_parser(
         "session-task-history",
@@ -1034,9 +1063,16 @@ async def dispatch(args: argparse.Namespace) -> int:
             connect_result = await _connect_session_bridge(bridge, args, config)
             status_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
             ports_result = await bridge.get_known_ports(timeout=args.event_timeout_seconds)
+            map_result = await bridge.get_my_map(
+                center_sector=_coerce_int(_extract_bridge_payload(status_result).get("sector", {}).get("id")),
+                max_hops=args.map_max_hops,
+                max_sectors=args.map_max_sectors,
+                timeout=args.event_timeout_seconds,
+            )
             summary = _rank_trade_opportunities(
                 status_result=status_result,
                 ports_result=ports_result,
+                map_result=map_result,
                 commodities=args.commodities,
                 limit=args.limit,
             )
@@ -1045,6 +1081,34 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "summary": summary,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-auto-trade-loop":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_auto_trade_loop(
+                bridge,
+                goal=args.goal,
+                commodities=args.commodities,
+                limit=args.limit,
+                map_max_hops=args.map_max_hops,
+                map_max_sectors=args.map_max_sectors,
+                max_cycles=args.max_cycles,
+                target_credits=args.target_credits,
+                min_warp=args.min_warp,
+                step_retries=args.step_retries,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -2862,10 +2926,56 @@ def _status_warp(summary: dict[str, Any]) -> int | None:
     return warp if isinstance(warp, int) else None
 
 
+def _map_graph_from_payload(payload: dict[str, Any]) -> dict[int, set[int]]:
+    graph: dict[int, set[int]] = {}
+    if not isinstance(payload, dict):
+        return graph
+    sectors = payload.get("sectors")
+    if not isinstance(sectors, list):
+        return graph
+    for sector in sectors:
+        if not isinstance(sector, dict):
+            continue
+        sector_id = _coerce_int(sector.get("id"))
+        if sector_id <= 0:
+            continue
+        graph.setdefault(sector_id, set())
+        lanes = sector.get("lanes")
+        if not isinstance(lanes, list):
+            continue
+        for lane in lanes:
+            if not isinstance(lane, dict):
+                continue
+            neighbor = _coerce_int(lane.get("to"))
+            if neighbor <= 0:
+                continue
+            graph.setdefault(sector_id, set()).add(neighbor)
+            if lane.get("two_way") is not False:
+                graph.setdefault(neighbor, set()).add(sector_id)
+    return graph
+
+
+def _shortest_path_lengths(graph: dict[int, set[int]], *, start: int) -> dict[int, int]:
+    if start <= 0 or start not in graph:
+        return {}
+    distances: dict[int, int] = {start: 0}
+    queue: deque[int] = deque([start])
+    while queue:
+        sector = queue.popleft()
+        base_distance = distances[sector]
+        for neighbor in graph.get(sector, set()):
+            if neighbor in distances:
+                continue
+            distances[neighbor] = base_distance + 1
+            queue.append(neighbor)
+    return distances
+
+
 def _rank_trade_opportunities(
     *,
     status_result: dict[str, Any],
     ports_result: dict[str, Any],
+    map_result: dict[str, Any] | None,
     commodities: list[str],
     limit: int,
 ) -> dict[str, Any]:
@@ -2874,14 +2984,17 @@ def _rank_trade_opportunities(
 
     status_payload = _extract_bridge_payload(status_result)
     ports_payload = _extract_bridge_payload(ports_result)
+    map_payload = _extract_bridge_payload(map_result or {})
 
     ship = status_payload.get("ship") if isinstance(status_payload, dict) else None
     sector = status_payload.get("sector") if isinstance(status_payload, dict) else None
     ports = ports_payload.get("ports") if isinstance(ports_payload, dict) else None
+    graph = _map_graph_from_payload(map_payload)
 
     cargo_capacity = _coerce_int(ship.get("cargo_capacity")) if isinstance(ship, dict) else 0
     ship_credits = _coerce_int(ship.get("credits")) if isinstance(ship, dict) else 0
     current_sector = _coerce_int(sector.get("id")) if isinstance(sector, dict) else 0
+    distances_from_current = _shortest_path_lengths(graph, start=current_sector) if current_sector > 0 else {}
 
     commodity_list = commodities or ["quantum_foam", "retro_organics", "neuro_symbolics"]
     if not isinstance(ports, list):
@@ -2893,6 +3006,7 @@ def _rank_trade_opportunities(
         }
 
     rows: list[dict[str, Any]] = []
+    pair_distance_cache: dict[tuple[int, int], int | None] = {}
     for buy_port in ports:
         if not isinstance(buy_port, dict):
             continue
@@ -2926,8 +3040,17 @@ def _rank_trade_opportunities(
                 continue
 
             sell_hops = _coerce_int(sell_port.get("hops_from_start"))
-            inter_port_hops = abs(sell_hops - buy_hops)
-            total_hops = buy_hops + inter_port_hops
+            distance_to_buy = distances_from_current.get(buy_sector_id, buy_hops)
+            pair_key = (buy_sector_id, sell_sector_id)
+            if pair_key not in pair_distance_cache:
+                distances_from_buy = _shortest_path_lengths(graph, start=buy_sector_id)
+                pair_distance_cache[pair_key] = distances_from_buy.get(sell_sector_id)
+            inter_port_hops = pair_distance_cache[pair_key]
+            distance_source = "map"
+            if inter_port_hops is None:
+                inter_port_hops = abs(sell_hops - buy_hops)
+                distance_source = "approx_hops_from_start"
+            total_hops = distance_to_buy + inter_port_hops
 
             for commodity in commodity_list:
                 buy_price = _coerce_int(buy_prices.get(commodity))
@@ -2951,9 +3074,10 @@ def _rank_trade_opportunities(
                         "max_units": max_units,
                         "expected_profit": expected_profit,
                         "expected_trade_volume": expected_volume,
-                        "distance_to_buy": buy_hops,
+                        "distance_to_buy": distance_to_buy,
                         "distance_buy_to_sell": inter_port_hops,
                         "distance_total": total_hops,
+                        "distance_source": distance_source,
                         "profit_per_total_hop": round(expected_profit / max(total_hops, 1), 2),
                         "volume_per_total_hop": round(expected_volume / max(total_hops, 1), 2),
                     }
@@ -2978,6 +3102,18 @@ def _rank_trade_opportunities(
         "best_by_volume_per_hop": max(rows, key=lambda row: row["volume_per_total_hop"], default=None),
         "opportunities": rows[:limit],
     }
+
+
+def _select_trade_opportunity(summary: dict[str, Any], goal: str) -> dict[str, Any] | None:
+    if not isinstance(summary, dict):
+        return None
+    if goal == "wealth":
+        selected = summary.get("best_by_profit_per_hop")
+    elif goal == "trading":
+        selected = summary.get("best_by_volume_per_hop")
+    else:
+        selected = summary.get("best_by_profit")
+    return selected if isinstance(selected, dict) else None
 
 
 def _port_price(summary: dict[str, Any], commodity: str) -> int | None:
@@ -3143,6 +3279,90 @@ async def _run_corporation_explore_loop(
             "summary": current_summary,
         },
         "final_ship": current_ship,
+    }
+
+
+async def _run_auto_trade_loop(
+    bridge: HeadlessBridgeProcess,
+    *,
+    goal: str,
+    commodities: list[str],
+    limit: int,
+    map_max_hops: int,
+    map_max_sectors: int,
+    max_cycles: int | None,
+    target_credits: int | None,
+    min_warp: int,
+    step_retries: int,
+    timeout: float,
+) -> dict[str, Any]:
+    status_result = await bridge.get_my_status(timeout=timeout)
+    ports_result = await bridge.get_known_ports(timeout=timeout)
+    status_payload = _extract_bridge_payload(status_result)
+    current_sector = _coerce_int(status_payload.get("sector", {}).get("id"))
+    map_result = await bridge.get_my_map(
+        center_sector=current_sector,
+        max_hops=map_max_hops,
+        max_sectors=map_max_sectors,
+        timeout=timeout,
+    )
+    opportunities = _rank_trade_opportunities(
+        status_result=status_result,
+        ports_result=ports_result,
+        map_result=map_result,
+        commodities=commodities,
+        limit=limit,
+    )
+    selected = _select_trade_opportunity(opportunities, goal)
+    if not isinstance(selected, dict):
+        raise HeadlessBridgeError(
+            "session-auto-trade-loop",
+            f"no route available for goal {goal!r}",
+            payload=opportunities,
+        )
+
+    loop_result = await _run_trade_route_loop(
+        bridge,
+        buy_sector=_coerce_int(selected.get("buy_sector")),
+        sell_sector=_coerce_int(selected.get("sell_sector")),
+        commodity=str(selected.get("commodity")),
+        max_cycles=max_cycles,
+        target_credits=target_credits,
+        min_warp=min_warp,
+        step_retries=step_retries,
+        timeout=timeout,
+    )
+    return {
+        "goal": goal,
+        "selected_route": selected,
+        "opportunities": opportunities,
+        "loop": loop_result,
+    }
+
+
+async def _recover_with_trade_order(
+    bridge: HeadlessBridgeProcess,
+    *,
+    summary: dict[str, Any],
+    commodity: str,
+    timeout: float,
+) -> dict[str, Any]:
+    prompt = _build_route_sell_prompt(summary, commodity)
+    action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
+    watch_result = await _watch_player_task(
+        bridge,
+        wait_for_finish=True,
+        timeout=timeout,
+    )
+    status_result = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
+    final_summary = status_result["summary"]
+    success = _cargo_units(final_summary, commodity) == 0
+    return {
+        "prompt": prompt,
+        "result": action_result,
+        "watch": watch_result,
+        "status": status_result,
+        "success": success,
     }
 
 
@@ -3379,8 +3599,35 @@ async def _run_trade_route_loop(
         )
         current_summary = cycle_end
 
+    trade_order_recovery = None
+    if stop_reason in {"sell_failed", "recovery_sell_failed"} and _cargo_units(current_summary, commodity) > 0:
+        trade_order_recovery = await _recover_with_trade_order(
+            bridge,
+            summary=current_summary,
+            commodity=commodity,
+            timeout=timeout,
+        )
+        recovery_steps.append(
+            {
+                "step": "trade_order_sell_recovery",
+                "commodity": commodity,
+                "result": trade_order_recovery,
+            }
+        )
+        steps.append(recovery_steps[-1])
+        recovery_summary = trade_order_recovery["status"]["summary"]
+        if isinstance(recovery_summary, dict):
+            current_summary = recovery_summary
+        if trade_order_recovery.get("success"):
+            stop_reason = "sell_recovered"
+
     return {
-        "success": stop_reason in {"target_credits_reached", "max_cycles_reached", "min_warp_reached"},
+        "success": stop_reason in {
+            "target_credits_reached",
+            "max_cycles_reached",
+            "min_warp_reached",
+            "sell_recovered",
+        },
         "stop_reason": stop_reason,
         "buy_sector": buy_sector,
         "sell_sector": sell_sector,
@@ -3395,6 +3642,7 @@ async def _run_trade_route_loop(
         "cycle_results": cycle_results,
         "recovery_steps": recovery_steps,
         "steps": steps,
+        "trade_order_recovery": trade_order_recovery,
     }
 
 

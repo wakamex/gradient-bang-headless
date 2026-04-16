@@ -22,6 +22,7 @@ This scaffold supports:
 - Python/CLI bridge integration for session connect/request/message/text flows
 - first-class live session reads for status, ports, map, chat history, ship lists, ship definitions, corporation data, task events, and quest status
 - a first-class `session-trade-opportunities` helper that ranks the current known-port graph
+- a first-class `session-auto-trade-loop` that picks a route for `wealth`, `trading`, or raw `profit`
 - exact frontend prompt contracts for trade orders and ship purchase requests
 - first-class logistics helpers for warp recharge and credit transfers
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
@@ -110,6 +111,11 @@ gb-headless session-trade-opportunities \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
   --limit 12
+gb-headless session-auto-trade-loop \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --goal wealth \
+  --max-cycles 2
 gb-headless session-chat-history \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
@@ -246,6 +252,12 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-trade-opportunities` is the preferred decision surface before
   picking a route. It reads current ship state plus the known-port graph and
   ranks visible routes by raw profit, profit per hop, and trade volume per hop.
+  It now uses the session map graph for real shortest-path distances instead of
+  estimating inter-port distance from hop deltas alone.
+- `session-auto-trade-loop` is the preferred execution surface once a goal is
+  clear. It uses `session-trade-opportunities` internally, picks the current
+  best visible route for `wealth`, `trading`, or raw `profit`, then runs the
+  deterministic trade loop on that route.
 - the exact trade-order surface is stronger than the older `sell all` phrasing.
   In live play, `session-trade-order --trade-type sell --quantity 9
   --commodity neuro_symbolics --price-per-unit 40` successfully routed the
