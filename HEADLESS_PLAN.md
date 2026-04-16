@@ -25,10 +25,16 @@ The intent is not just to scaffold code, but to keep a running record of:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
    - exploration through repeated `session-corp-explore-loop` frontier runs
-   - trading through the best visible route from `session-auto-trade-loop --goal trading`, but in short explicit batches instead of one long unattended loop
-   - wealth through `session-wealth-loadout` at the cheapest legal current port, plus existing corp assets
+   - trading through short exact-order or single-route batches on the current
+     best visible profit route, with `session-liquidate-cargo` used to reset
+     stranded holds cleanly
+   - wealth through realized short-profit cycles first, with
+     `session-wealth-loadout` used as the fast board-padding helper when the
+     ship is already parked on a cheap seller
    - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
-   - short-term operational constraint: the personal ship is now warp-limited, so exploration is the cheapest current lever until the ship reaches a recharge path again
+   - short-term operational constraint: long unattended trade loops can still
+     advance live state without returning a clean bounded result, so short
+     explicit batches are the current reliability ceiling
 
 ## Current Milestones
 
@@ -481,6 +487,51 @@ Latest live progression proved:
   - the probe was last observed continuing through sectors `2547` and `3513`
   - visible exploration stayed at rank `35`, but the next visible row gap
     tightened to `3`
+- added `session-liquidate-cargo` as a first-class operational helper for
+  unwinding whatever the personal ship is already carrying without hand-picking
+  the buyer sector
+- proved that helper live twice:
+  - from sector `780`, it inferred the loaded `RO`, chose sector `2984` as the
+    best-price buyer, moved there, and sold the full hold at `13`
+  - from sector `1808`, it again picked sector `2984` for the best-price
+    `RO` liquidation and sold the full hold cleanly after a bounded move
+- used the cleaner route state to run short `2984 -> 1808` QF batches:
+  - a clean `2`-cycle batch lifted credits to `7717` and parked the ship at
+    sector `1808`
+  - `session-wealth-loadout` at `1808` bought `30` RO at `8` and pushed visible
+    wealth to `44077` at rank `67`
+- used one bounded `session-corp-explore-loop` run to clear the next visible
+  exploration row:
+  - `gbheadless Auto Probe I` moved `3513 -> 2814`
+  - known sectors `339 -> 344`
+  - corporation sectors visited `333 -> 338`
+  - visible exploration improved `35 -> 33`
+- tested a longer `4`-cycle QF batch and found the next operational limit:
+  - the batch made real live progress but never returned a clean final result
+  - direct status inspection showed the Kestrel had advanced to sector `1808`
+    with `30` QF on board, credits `7747`, and trading already lifted to
+    `259598`
+  - this is now the clearest proof that long trade batches are productive but
+    still not durable enough to count as clean unattended surfaces
+- finished that dirty state through exact-order surfaces instead of another long
+  loop:
+  - sold the loaded `30` QF at sector `1808` for `930`
+  - bought `30` NS at `40` through the exact website trade-order contract
+  - visible trading improved again to `261728` at rank `27`
+  - visible wealth fell back to `44077`, which is the current best evidence
+    that real wealth progression depends on realized profit more than simply
+    swapping into a different cargo hold
+
+Current live state after this pass:
+
+- Kestrel in sector `1808`
+- `7477` credits
+- `30` `NS`
+- `227/500` warp
+- `gbheadless Auto Probe I` in sector `2814` with `423/500` warp
+- exploration `344`, visible rank `33`
+- trading `261728`, visible rank `27`
+- wealth `44077`, visible rank `67`
 
 Interpretation:
 
@@ -495,8 +546,12 @@ Interpretation:
   documenting which website actions still degrade when driven headlessly
 - the next concrete live-game push is now:
   - keep using fresh `1000`-credit probes from a mega-port when the goal is exploration rank
-  - keep using `session-wealth-loadout` whenever the goal is immediate wealth rank and the ship is parked on a cheap legal seller
-  - keep the current QF trading route in short explicit batches; the route is still good, but the long unattended loop is not
+  - keep using `session-liquidate-cargo` whenever a stranded hold is blocking
+    the next deliberate route choice
+  - keep using `session-wealth-loadout` only for quick board padding at a cheap
+    current port, not as the main wealth-growth engine
+  - keep the current QF trading route in short explicit batches; it is still
+    the best proven wealth lever, but the long unattended loop is not clean
   - harden corp-task watching and large-batch trade looping so the productive live paths are also operationally clean
   - either make unowned-ship collection work or document it as a live bot/path
     bug with clear reproduction

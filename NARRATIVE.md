@@ -591,6 +591,94 @@ in the live Gradient Bang production game.
     returns, so the narrative needs to record both the returned result and the
     later observed map state
 
+### Cargo Liquidation Becomes A Real Surface
+
+- Added `session-liquidate-cargo` because the personal ship kept ending up in
+  the same messy state: loaded with the wrong commodity for the next goal and
+  parked away from the route I actually wanted to run.
+- The useful part is not just "sell cargo." The helper now does the full
+  operational cleanup:
+  - infer the loaded commodity
+  - read the known-port graph
+  - pick a legal buyer by distance, best price, or best price per hop
+  - move there
+  - finish with an exact sell order
+- Proved it live first from sector `780`:
+  - the Kestrel was holding `30` `RO`
+  - the helper selected sector `2984` as the best-price buyer
+  - it moved there and sold the full hold at `13`
+- Then used the cleaner route state for a bounded `2984 -> 1808` QF batch:
+  - a `2`-cycle run stayed clean
+  - credits rose to `7717`
+  - the ship ended in sector `1808`
+- From there, `session-wealth-loadout` bought `30` `RO` at `8` and pushed the
+  wealth board up to `44077` at visible rank `67`.
+- That matters because it turned an improvised recovery pattern into a durable
+  client surface. Before this, "fix the ship state" meant remembering which
+  buyer to head toward. Now it is a command.
+
+### Exploration Clears The Next Visible Row
+
+- With the personal ship parked and the probe idle, the next cheap gain was
+  still exploration: only `3` sectors separated the account from the next
+  visible row.
+- One bounded `session-corp-explore-loop` run was enough:
+  - `gbheadless Auto Probe I` moved `3513 -> 2814`
+  - known sectors rose `339 -> 344`
+  - corporation sectors visited rose `333 -> 338`
+  - visible exploration improved from rank `35` to rank `33`
+- That is still the clearest proof that the probe is the best low-risk rank
+  lever in the whole client. It keeps moving one board without disturbing the
+  personal ship's trading posture.
+
+### Long Trade Batches Still Advance The Game, But Not Cleanly
+
+- Tried to turn the now-stable `2984 -> 1808` QF route into a larger trading
+  push with a `4`-cycle batch.
+- The result was exactly the kind of half-success that matters more than a
+  clean demo:
+  - the batch never returned a final result object
+  - but the live game state had advanced materially when I checked directly
+  - the Kestrel was sitting in sector `1808` with `30` `QF`, `7747` credits,
+    and the trading board had already climbed to `259598`
+- That is the strongest evidence yet that large trade batches are productive
+  but still not operationally trustworthy. They can move the live character and
+  still fail the "clean headless surface" test.
+- Rather than rerun the same opaque batch, I finished through exact orders:
+  - sold the loaded `30` `QF` at `31`
+  - bought `30` `NS` at `40`
+- That was enough to move visible trading again:
+  - trading improved to `261728`
+  - visible rank improved to `27`
+- Wealth, interestingly, fell back to `44077` after the cargo swap. That makes
+  the current strategy clearer than before:
+  - trading wants explicit volume and realized sales
+  - exploration wants probe frontier runs
+  - wealth appears to care about realized profit more than just swapping into a
+    different full hold
+
+### Current Live Position
+
+- Kestrel:
+  - sector `1808`
+  - `7477` credits
+  - `30` `NS`
+  - `227/500` warp
+- `gbheadless Auto Probe I`:
+  - sector `2814`
+  - `423/500` warp
+- Public boards:
+  - exploration `344`, visible rank `33`
+  - trading `261728`, visible rank `27`
+  - wealth `44077`, visible rank `67`
+- Strategy from here:
+  - use the probe whenever the cheapest move is to gain sectors
+  - use `session-liquidate-cargo` whenever the ship is loaded with the wrong
+    hold for the next deliberate route
+  - use short profitable QF cycles for real wealth growth
+  - treat `session-wealth-loadout` as a quick board-padding move, not the main
+    wealth engine
+
 ## Personal Impressions
 
 From this headless playthrough, the game is more interesting than a conventional space-trading grind because the interface is part of the game. The strongest idea here is that progress comes from learning how to drive an agent-mediated world, not just from clicking faster through menus.
