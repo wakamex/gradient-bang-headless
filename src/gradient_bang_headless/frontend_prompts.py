@@ -8,6 +8,14 @@ RESOURCE_VERBOSE_NAMES = {
 }
 
 
+def _commodity_verbose_name(commodity: str) -> str:
+    commodity_key = commodity.strip().lower()
+    commodity_name = RESOURCE_VERBOSE_NAMES.get(commodity_key)
+    if commodity_name is None:
+        raise ValueError(f"unsupported commodity {commodity!r}")
+    return commodity_name
+
+
 def build_trade_order_prompt(
     *,
     trade_type: str,
@@ -19,10 +27,7 @@ def build_trade_order_prompt(
     if normalized_trade_type not in {"BUY", "SELL"}:
         raise ValueError(f"unsupported trade_type {trade_type!r}")
 
-    commodity_key = commodity.strip().lower()
-    commodity_name = RESOURCE_VERBOSE_NAMES.get(commodity_key)
-    if commodity_name is None:
-        raise ValueError(f"unsupported commodity {commodity!r}")
+    commodity_name = _commodity_verbose_name(commodity)
 
     if quantity <= 0:
         raise ValueError("quantity must be > 0")
@@ -32,6 +37,59 @@ def build_trade_order_prompt(
     return (
         f"Place a {normalized_trade_type} trade for {quantity} of "
         f"{commodity_name} at {price_per_unit} CR per unit"
+    )
+
+
+def build_move_to_sector_prompt(*, sector_id: int) -> str:
+    if sector_id <= 0:
+        raise ValueError("sector_id must be > 0")
+    return f"Move to sector {sector_id}, then stop."
+
+
+def build_buy_max_commodity_prompt(*, commodity: str) -> str:
+    commodity_name = _commodity_verbose_name(commodity)
+    return f"Buy as much {commodity_name} as possible at this port, then stop."
+
+
+def build_sell_all_commodity_prompt(*, commodity: str) -> str:
+    commodity_name = _commodity_verbose_name(commodity)
+    return f"Sell all {commodity_name} at this port, then stop."
+
+
+def build_recharge_warp_prompt(*, units: int | None = None) -> str:
+    if units is None:
+        return "Recharge my warp power to full at this mega-port, then stop and report final credits and warp."
+    if units <= 0:
+        raise ValueError("units must be > 0")
+    return (
+        f"Recharge {units} units of warp power at this mega-port, "
+        "then stop and report final credits and warp."
+    )
+
+
+def build_transfer_credits_prompt(
+    *,
+    amount: int,
+    to_ship_name: str,
+    to_ship_id: str | None = None,
+) -> str:
+    if amount <= 0:
+        raise ValueError("amount must be > 0")
+    normalized_ship_name = to_ship_name.strip()
+    if not normalized_ship_name:
+        raise ValueError("to_ship_name is required")
+
+    ship_ref = normalized_ship_name
+    if to_ship_id:
+        normalized_ship_id = to_ship_id.strip()
+        if not normalized_ship_id:
+            raise ValueError("to_ship_id must be non-empty when provided")
+        ship_ref = f"{ship_ref} [{normalized_ship_id[:6]}]"
+    credit_label = "credit" if amount == 1 else "credits"
+
+    return (
+        f"Transfer {amount} {credit_label} to {ship_ref} in this sector, "
+        "then stop and report final credits."
     )
 
 

@@ -24,10 +24,10 @@ The intent is not just to scaffold code, but to keep a running record of:
 5. Keep extending post-tutorial live-player surfaces from the website:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
-   - exploration through corp probes until visible-board entry
-   - low-capital trading via `1908 <-> 3358` RO shuttle
-   - mid-capital trading via `674 -> 907 -> 674` NS/QF cycle
-   - higher-capital trading via full-hold `472 -> 3358` NS runs
+   - exploration through corporation probe runs
+   - wealth through repeated personal profits plus existing corp assets
+   - trading through the retried deterministic `3786 -> 1009` Neuro Symbolics route
+   - medium-term capital target: a better personal trading ship, not more one-off prompt experiments
 
 ## Current Milestones
 
@@ -147,6 +147,10 @@ Implemented:
 - first-class personal-ship tasking with real `task.start`/`task.finish`
   watching through `session-player-task`
 - first-class corp-ship tasking with real `task.start`/`task.finish` watching
+- first-class logistics helpers for warp recharge and credit transfers
+- a deterministic `session-trade-route-loop` built from bounded watched tasks,
+  with per-step retries after the first long production run exposed transient
+  move failures
 - exact frontend prompt contract for collecting an unowned ship in the sector
 - a reusable `loop` runner for long bot-driven objectives
 
@@ -189,19 +193,21 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `472`
-- personal ship credits: `2015`
+- personal ship sector: `1009`
+- personal ship credits: `4987`
+- personal ship warp power: `278`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `867`
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `446`
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- warp power: `149`
+- known sectors: `84`
+- corporation sectors visited: `79`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `54` sectors visited, currently observed at rank `100`
-- estimated wealth: `33015`
-- visible wealth gap: about `2656`
+- visible exploration board entry: `84` known sectors, currently observed at rank `77`
+- visible trading board entry: `123386` total volume, currently observed at rank `49`
+- visible wealth board entry: currently observed at rank `92`
 
 Latest live progression proved:
 
@@ -233,6 +239,8 @@ Latest live progression proved:
   personal-only field
 - added `session-player-task` as a first-class watched surface for short
   personal-ship objectives
+- added first-class `session-recharge-warp` and `session-transfer-credits`
+  commands after proving both regular-player logistics flows live
 - pushed the corporation probe through a 29-sector exploration run that
   entered the visible exploration board at `54` sectors
 - mapped the current best live trade ladder by capital band:
@@ -245,6 +253,27 @@ Latest live progression proved:
 - repeated the higher-capital full-hold `472 <-> 3358` NS loop three more
   times and grew the ship further to `2015` credits before stopping at the
   configured warp floor
+- read the production leaderboard definitions directly and confirmed the real
+  optimization split:
+  - exploration unions personal and corp map knowledge
+  - wealth includes the full corporation fleet
+  - trading is personal-only and ranked by 7-day `total_trade_volume`
+- promoted the live `3786 -> 1009` Neuro Symbolics run into a first-class
+  `session-trade-route-loop` after the older freeform trade ladder degraded
+- validated the route loop live, then hardened it with per-step retries when
+  the first long run completed `9` cycles and stopped on one failed move
+- pushed the corporation probe through two more post-tutorial exploration runs:
+  - `10` new sectors to sector `4633`
+  - `15` new sectors to sector `446`
+- used the route loop for two more production pushes:
+  - `9` completed cycles to `4177` credits
+  - `6` retried cycles to `4807` credits
+  - `2` more cycles to `4987` credits
+- reached visible-board entry in all three regular-player leaderboard
+  categories using only the headless public/session path:
+  - exploration rank `77`
+  - trading rank `49`
+  - wealth rank `92`
 
 Interpretation:
 
@@ -308,10 +337,14 @@ Implemented:
 Headless convenience wrappers, not counted separately:
 
 - `session-claim-all-rewards`
+- `session-player-task`
+- `session-corp-task`
+- `session-recharge-warp`
+- `session-transfer-credits`
+- `session-trade-route-loop`
 
 Not first-class yet:
 
-- `[ ]` `combat-action`
 - `[ ]` `say-text`
 - `[ ]` `say-text-dismiss`
 - `[ ]` `dump-llm-context`

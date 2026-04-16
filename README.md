@@ -22,6 +22,8 @@ This scaffold supports:
 - Python/CLI bridge integration for session connect/request/message/text flows
 - first-class live session reads for status, ports, map, chat history, ship lists, ship definitions, corporation data, task events, and quest status
 - exact frontend prompt contracts for trade orders and ship purchase requests
+- first-class logistics helpers for warp recharge and credit transfers
+- a deterministic `session-trade-route-loop` for repeatable personal trading
 - a reusable `loop` runner for long bot-driven objectives with state polling and reprompts
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
 
@@ -160,6 +162,24 @@ gb-headless session-player-task \
   --access-token "$GB_ACCESS_TOKEN" \
   --task-description 'Move to sector 1908, buy as much retro organics as possible there, return to sector 3358, sell all retro organics, then stop and report final credits and sector.' \
   --wait-for-finish
+gb-headless session-recharge-warp \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --wait-for-finish
+gb-headless session-transfer-credits \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --amount 100 \
+  --to-ship-name "gbheadless Auto Hauler 1" \
+  --to-ship-id c7c348
+gb-headless session-trade-route-loop \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --buy-sector 3786 \
+  --sell-sector 1009 \
+  --commodity neuro_symbolics \
+  --max-cycles 6 \
+  --step-retries 2
 gb-headless call leaderboard_resources --method GET
 gb-headless status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless plot-course --to-sector 301 --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
@@ -200,6 +220,11 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-player-task` does the same for the personal ship. It is the
   preferred surface for short deterministic bot-driven objectives like
   single-route trade loops or move-and-sell steps.
+- `session-recharge-warp` and `session-transfer-credits` are first-class
+  wrappers around regular-player logistics prompts that were proven live.
+- `session-trade-route-loop` is the preferred surface for repeatable personal
+  trade grinding. It uses bounded watched tasks rather than one broad
+  freeform objective, and it retries transient step failures.
 - `session-trade-order`, `session-purchase-ship`, and
   `session-purchase-corp-ship` send the exact strings the upstream React
   client builds in `TradePanel.tsx` and `ShipDetails.tsx`.
@@ -214,6 +239,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   it logs in, writes `GB_ACCESS_TOKEN` and `GB_REFRESH_TOKEN`, and writes
   `GB_CHARACTER_ID` when it can select a character by configured name or
   by a single-character account.
+- during long live sessions, if fresh `/start` calls begin returning `401`,
+  passing a newly issued `--access-token` inline is a reliable immediate
+  workaround while investigating env/token staleness.
 - `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.
 - `game-call` auto-injects `character_id` and `actor_character_id` when configured.
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.

@@ -10,6 +10,8 @@ from typing import Any
 from .config import HeadlessConfig, repo_root, update_dotenv
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
 from .frontend_prompts import (
+    build_buy_max_commodity_prompt,
+    build_recharge_warp_prompt,
     build_corporation_ship_purchase_prompt,
     build_corporation_ship_task_prompt,
     build_garrison_collect_prompt,
@@ -17,9 +19,12 @@ from .frontend_prompts import (
     build_collect_unowned_ship_prompt,
     build_engage_combat_prompt,
     build_garrison_update_prompt,
+    build_move_to_sector_prompt,
+    build_sell_all_commodity_prompt,
     build_ship_rename_prompt,
     build_ship_purchase_prompt,
     build_trade_order_prompt,
+    build_transfer_credits_prompt,
 )
 from .http import (
     EventScope,
@@ -303,6 +308,44 @@ def build_parser() -> argparse.ArgumentParser:
     session_player_task.add_argument("--task-description", required=True)
     session_player_task.add_argument("--wait-for-finish", action="store_true")
     session_player_task.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
+    session_recharge_warp = sub.add_parser(
+        "session-recharge-warp",
+        help="Connect a session, recharge warp at a mega-port via the proven player-task prompt, and watch task lifecycle events",
+    )
+    _add_session_connect_args(session_recharge_warp)
+    session_recharge_warp.add_argument("--units", type=int)
+    session_recharge_warp.add_argument("--wait-for-finish", action="store_true")
+    session_recharge_warp.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
+    session_transfer_credits = sub.add_parser(
+        "session-transfer-credits",
+        help="Connect a session, transfer credits to another ship in-sector via the proven player-task prompt, and watch task lifecycle events",
+    )
+    _add_session_connect_args(session_transfer_credits)
+    session_transfer_credits.add_argument("--amount", required=True, type=int)
+    session_transfer_credits.add_argument("--to-ship-name", required=True)
+    session_transfer_credits.add_argument("--to-ship-id")
+    session_transfer_credits.add_argument("--wait-for-finish", action="store_true")
+    session_transfer_credits.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
+    session_trade_route_loop = sub.add_parser(
+        "session-trade-route-loop",
+        help="Connect a session and run a deterministic personal trade route via bounded watched tasks",
+    )
+    _add_session_connect_args(session_trade_route_loop)
+    session_trade_route_loop.add_argument("--buy-sector", required=True, type=int)
+    session_trade_route_loop.add_argument("--sell-sector", required=True, type=int)
+    session_trade_route_loop.add_argument(
+        "--commodity",
+        required=True,
+        choices=["quantum_foam", "retro_organics", "neuro_symbolics"],
+    )
+    session_trade_route_loop.add_argument("--max-cycles", type=int)
+    session_trade_route_loop.add_argument("--target-credits", type=int)
+    session_trade_route_loop.add_argument("--min-warp", type=int, default=50)
+    session_trade_route_loop.add_argument("--step-retries", type=int, default=1)
+    session_trade_route_loop.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
     session_trade_order = sub.add_parser(
         "session-trade-order",
@@ -1285,6 +1328,86 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-recharge-warp":
+        prompt = _recharge_warp_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                prompt,
+                wait_seconds=0.0,
+            )
+            watch_result = await _watch_player_task(
+                bridge,
+                wait_for_finish=args.wait_for_finish,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-transfer-credits":
+        prompt = _transfer_credits_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                prompt,
+                wait_seconds=0.0,
+            )
+            watch_result = await _watch_player_task(
+                bridge,
+                wait_for_finish=args.wait_for_finish,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-trade-route-loop":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await _run_trade_route_loop(
+                bridge,
+                buy_sector=args.buy_sector,
+                sell_sector=args.sell_sector,
+                commodity=args.commodity,
+                max_cycles=args.max_cycles,
+                target_credits=args.target_credits,
+                min_warp=args.min_warp,
+                step_retries=args.step_retries,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-trade-order":
         prompt = _trade_order_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
@@ -1988,6 +2111,24 @@ def _trade_order_prompt_from_args(args: argparse.Namespace) -> str:
         raise HeadlessBridgeError("session-trade-order", str(exc)) from exc
 
 
+def _recharge_warp_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_recharge_warp_prompt(units=args.units)
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-recharge-warp", str(exc)) from exc
+
+
+def _transfer_credits_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_transfer_credits_prompt(
+            amount=args.amount,
+            to_ship_name=args.to_ship_name,
+            to_ship_id=args.to_ship_id,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-transfer-credits", str(exc)) from exc
+
+
 def _ship_purchase_prompt_from_args(args: argparse.Namespace) -> str:
     try:
         return build_ship_purchase_prompt(
@@ -2066,6 +2207,45 @@ def _ship_rename_prompt_from_args(args: argparse.Namespace) -> str:
         return build_ship_rename_prompt(ship_name=args.ship_name)
     except ValueError as exc:
         raise HeadlessBridgeError("session-rename-ship", str(exc)) from exc
+
+
+def _extract_status_snapshot(server_event: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(server_event, dict):
+        return None
+    if server_event.get("event") == "server_message":
+        data = server_event.get("data")
+        if isinstance(data, dict):
+            return _extract_status_snapshot(data)
+        return None
+    if server_event.get("event") != "status.snapshot":
+        return None
+    payload = server_event.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def _status_snapshot_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    ship = payload.get("ship")
+    sector = payload.get("sector")
+    cargo = ship.get("cargo") if isinstance(ship, dict) else None
+    cargo_summary = cargo if isinstance(cargo, dict) else {}
+
+    return {
+        "sector_id": sector.get("id") if isinstance(sector, dict) else None,
+        "port_code": (
+            sector.get("port", {}).get("code")
+            if isinstance(sector, dict) and isinstance(sector.get("port"), dict)
+            else None
+        ),
+        "ship_id": ship.get("ship_id") if isinstance(ship, dict) else None,
+        "ship_name": ship.get("ship_name") if isinstance(ship, dict) else None,
+        "ship_credits": ship.get("credits") if isinstance(ship, dict) else None,
+        "warp_power": ship.get("warp_power") if isinstance(ship, dict) else None,
+        "cargo": cargo_summary,
+        "empty_holds": ship.get("empty_holds") if isinstance(ship, dict) else None,
+    }
 
 
 def _extract_server_event(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -2365,6 +2545,352 @@ async def _watch_player_task(
         "task_finish": task_finish,
         "status": status_event,
         "post_watch_errors": post_watch_errors,
+    }
+
+
+async def _fetch_status_snapshot(
+    bridge: HeadlessBridgeProcess,
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    result = await bridge.get_my_status(timeout=timeout)
+    server_event = result.get("server_event")
+    payload = _extract_status_snapshot(server_event)
+    if payload is None:
+        raise HeadlessBridgeError(
+            "session-trade-route-loop",
+            "status request did not return a status.snapshot payload",
+            payload=result,
+        )
+    return {
+        "result": result,
+        "payload": payload,
+        "summary": _status_snapshot_summary(payload),
+    }
+
+
+async def _run_player_task_prompt(
+    bridge: HeadlessBridgeProcess,
+    *,
+    prompt: str,
+    timeout: float,
+) -> dict[str, Any]:
+    action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
+    watch_result = await _watch_player_task(
+        bridge,
+        wait_for_finish=True,
+        timeout=timeout,
+    )
+    status_result = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
+    return {
+        "prompt": prompt,
+        "result": action_result,
+        "watch": watch_result,
+        "status": status_result,
+    }
+
+
+async def _run_validated_player_step(
+    bridge: HeadlessBridgeProcess,
+    *,
+    prompt: str,
+    timeout: float,
+    retries: int,
+    validate,
+) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    for attempt in range(max(0, retries) + 1):
+        result = await _run_player_task_prompt(bridge, prompt=prompt, timeout=timeout)
+        attempts.append(result)
+        summary = result["status"]["summary"]
+        if validate(summary):
+            return {
+                "success": True,
+                "attempt_count": attempt + 1,
+                "attempts": attempts,
+                "result": result,
+            }
+    return {
+        "success": False,
+        "attempt_count": len(attempts),
+        "attempts": attempts,
+        "result": attempts[-1] if attempts else None,
+    }
+
+
+def _cargo_units(summary: dict[str, Any], commodity: str) -> int:
+    cargo = summary.get("cargo")
+    if not isinstance(cargo, dict):
+        return 0
+    value = cargo.get(commodity)
+    return int(value) if isinstance(value, int) else 0
+
+
+def _total_cargo_units(summary: dict[str, Any]) -> int:
+    cargo = summary.get("cargo")
+    if not isinstance(cargo, dict):
+        return 0
+    total = 0
+    for value in cargo.values():
+        if isinstance(value, int):
+            total += value
+    return total
+
+
+def _status_warp(summary: dict[str, Any]) -> int | None:
+    warp = summary.get("warp_power")
+    return warp if isinstance(warp, int) else None
+
+
+async def _run_trade_route_loop(
+    bridge: HeadlessBridgeProcess,
+    *,
+    buy_sector: int,
+    sell_sector: int,
+    commodity: str,
+    max_cycles: int | None,
+    target_credits: int | None,
+    min_warp: int,
+    step_retries: int,
+    timeout: float,
+) -> dict[str, Any]:
+    if buy_sector <= 0 or sell_sector <= 0:
+        raise HeadlessBridgeError("session-trade-route-loop", "sector ids must be > 0")
+    if max_cycles is not None and max_cycles <= 0:
+        raise HeadlessBridgeError("session-trade-route-loop", "--max-cycles must be > 0")
+    if target_credits is not None and target_credits <= 0:
+        raise HeadlessBridgeError("session-trade-route-loop", "--target-credits must be > 0")
+    if min_warp < 0:
+        raise HeadlessBridgeError("session-trade-route-loop", "--min-warp must be >= 0")
+    if step_retries < 0:
+        raise HeadlessBridgeError("session-trade-route-loop", "--step-retries must be >= 0")
+
+    initial_status = await _fetch_status_snapshot(bridge, timeout=timeout)
+    current_summary = initial_status["summary"]
+    cycle_results: list[dict[str, Any]] = []
+    recovery_steps: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+
+    while True:
+        current_sector = current_summary.get("sector_id")
+        current_credits = current_summary.get("ship_credits")
+        commodity_units = _cargo_units(current_summary, commodity)
+        total_cargo_units = _total_cargo_units(current_summary)
+        current_warp = _status_warp(current_summary)
+
+        if target_credits is not None and isinstance(current_credits, int) and current_credits >= target_credits:
+            stop_reason = "target_credits_reached"
+            break
+        if max_cycles is not None and len(cycle_results) >= max_cycles:
+            stop_reason = "max_cycles_reached"
+            break
+        if total_cargo_units > commodity_units:
+            stop_reason = "foreign_cargo_present"
+            break
+        if commodity_units > 0:
+            if current_sector != sell_sector:
+                move_prompt = build_move_to_sector_prompt(sector_id=sell_sector)
+                move_outcome = await _run_validated_player_step(
+                    bridge,
+                    prompt=move_prompt,
+                    timeout=timeout,
+                    retries=step_retries,
+                    validate=lambda summary: summary.get("sector_id") == sell_sector,
+                )
+                move_result = move_outcome["result"]
+                after_move = move_result["status"]["summary"] if isinstance(move_result, dict) else current_summary
+                recovery_steps.append(
+                    {
+                        "step": "move_to_sell_sector",
+                        "sector": sell_sector,
+                        "result": move_result,
+                        "attempt_count": move_outcome["attempt_count"],
+                    }
+                )
+                steps.append(recovery_steps[-1])
+                if not move_outcome["success"]:
+                    stop_reason = "recovery_move_failed"
+                    current_summary = after_move
+                    break
+                current_summary = after_move
+            sell_prompt = build_sell_all_commodity_prompt(commodity=commodity)
+            sell_outcome = await _run_validated_player_step(
+                bridge,
+                prompt=sell_prompt,
+                timeout=timeout,
+                retries=step_retries,
+                validate=lambda summary: _cargo_units(summary, commodity) == 0,
+            )
+            sell_result = sell_outcome["result"]
+            after_sell = sell_result["status"]["summary"] if isinstance(sell_result, dict) else current_summary
+            recovery_steps.append(
+                    {
+                        "step": "recovery_sell_all",
+                        "commodity": commodity,
+                        "result": sell_result,
+                        "attempt_count": sell_outcome["attempt_count"],
+                    }
+            )
+            steps.append(recovery_steps[-1])
+            current_summary = after_sell
+            if not sell_outcome["success"]:
+                stop_reason = "recovery_sell_failed"
+                break
+            continue
+
+        if current_warp is not None and current_warp < min_warp:
+            stop_reason = "min_warp_reached"
+            break
+
+        cycle_start = dict(current_summary)
+        cycle_step_results: list[dict[str, Any]] = []
+
+        if current_sector != buy_sector:
+            move_to_buy_prompt = build_move_to_sector_prompt(sector_id=buy_sector)
+            move_to_buy_outcome = await _run_validated_player_step(
+                bridge,
+                prompt=move_to_buy_prompt,
+                timeout=timeout,
+                retries=step_retries,
+                validate=lambda summary: summary.get("sector_id") == buy_sector,
+            )
+            move_to_buy_result = move_to_buy_outcome["result"]
+            after_move_to_buy = (
+                move_to_buy_result["status"]["summary"] if isinstance(move_to_buy_result, dict) else current_summary
+            )
+            cycle_step_results.append(
+                {
+                    "step": "move_to_buy_sector",
+                    "sector": buy_sector,
+                    "result": move_to_buy_result,
+                    "attempt_count": move_to_buy_outcome["attempt_count"],
+                }
+            )
+            steps.append(cycle_step_results[-1])
+            if not move_to_buy_outcome["success"]:
+                stop_reason = "move_to_buy_failed"
+                current_summary = after_move_to_buy
+                break
+            current_summary = after_move_to_buy
+
+        buy_prompt = build_buy_max_commodity_prompt(commodity=commodity)
+        buy_outcome = await _run_validated_player_step(
+            bridge,
+            prompt=buy_prompt,
+            timeout=timeout,
+            retries=step_retries,
+            validate=lambda summary: _cargo_units(summary, commodity) > 0,
+        )
+        buy_result = buy_outcome["result"]
+        after_buy = buy_result["status"]["summary"] if isinstance(buy_result, dict) else current_summary
+        cycle_step_results.append(
+            {
+                "step": "buy_max",
+                "commodity": commodity,
+                "result": buy_result,
+                "attempt_count": buy_outcome["attempt_count"],
+            }
+        )
+        steps.append(cycle_step_results[-1])
+        if not buy_outcome["success"]:
+            stop_reason = "buy_failed"
+            current_summary = after_buy
+            break
+        current_summary = after_buy
+
+        move_to_sell_prompt = build_move_to_sector_prompt(sector_id=sell_sector)
+        move_to_sell_outcome = await _run_validated_player_step(
+            bridge,
+            prompt=move_to_sell_prompt,
+            timeout=timeout,
+            retries=step_retries,
+            validate=lambda summary: summary.get("sector_id") == sell_sector,
+        )
+        move_to_sell_result = move_to_sell_outcome["result"]
+        after_move_to_sell = (
+            move_to_sell_result["status"]["summary"] if isinstance(move_to_sell_result, dict) else current_summary
+        )
+        cycle_step_results.append(
+            {
+                "step": "move_to_sell_sector",
+                "sector": sell_sector,
+                "result": move_to_sell_result,
+                "attempt_count": move_to_sell_outcome["attempt_count"],
+            }
+        )
+        steps.append(cycle_step_results[-1])
+        if not move_to_sell_outcome["success"]:
+            stop_reason = "move_to_sell_failed"
+            current_summary = after_move_to_sell
+            break
+        current_summary = after_move_to_sell
+
+        sell_prompt = build_sell_all_commodity_prompt(commodity=commodity)
+        sell_outcome = await _run_validated_player_step(
+            bridge,
+            prompt=sell_prompt,
+            timeout=timeout,
+            retries=step_retries,
+            validate=lambda summary: _cargo_units(summary, commodity) == 0,
+        )
+        sell_result = sell_outcome["result"]
+        after_sell = sell_result["status"]["summary"] if isinstance(sell_result, dict) else current_summary
+        cycle_step_results.append(
+            {
+                "step": "sell_all",
+                "commodity": commodity,
+                "result": sell_result,
+                "attempt_count": sell_outcome["attempt_count"],
+            }
+        )
+        steps.append(cycle_step_results[-1])
+        if not sell_outcome["success"]:
+            stop_reason = "sell_failed"
+            current_summary = after_sell
+            break
+
+        cycle_end = dict(after_sell)
+        cycle_results.append(
+            {
+                "cycle": len(cycle_results) + 1,
+                "buy_sector": buy_sector,
+                "sell_sector": sell_sector,
+                "commodity": commodity,
+                "start": cycle_start,
+                "end": cycle_end,
+                "profit": (
+                    cycle_end["ship_credits"] - cycle_start["ship_credits"]
+                    if isinstance(cycle_end.get("ship_credits"), int)
+                    and isinstance(cycle_start.get("ship_credits"), int)
+                    else None
+                ),
+                "warp_spent": (
+                    cycle_start["warp_power"] - cycle_end["warp_power"]
+                    if isinstance(cycle_end.get("warp_power"), int)
+                    and isinstance(cycle_start.get("warp_power"), int)
+                    else None
+                ),
+                "steps": cycle_step_results,
+            }
+        )
+        current_summary = cycle_end
+
+    return {
+        "success": stop_reason in {"target_credits_reached", "max_cycles_reached", "min_warp_reached"},
+        "stop_reason": stop_reason,
+        "buy_sector": buy_sector,
+        "sell_sector": sell_sector,
+        "commodity": commodity,
+        "target_credits": target_credits,
+        "max_cycles": max_cycles,
+        "min_warp": min_warp,
+        "step_retries": step_retries,
+        "cycles_completed": len(cycle_results),
+        "initial_status": initial_status["summary"],
+        "final_status": current_summary,
+        "cycle_results": cycle_results,
+        "recovery_steps": recovery_steps,
+        "steps": steps,
     }
 
 

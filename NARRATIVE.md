@@ -11,25 +11,25 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `472`
-- Personal ship credits: `2,015`
-- Personal ship warp: `149/500`
+- Personal ship sector: `1009`
+- Personal ship credits: `4,987`
+- Personal ship warp: `278/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `867`
+  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `446`
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `54` sectors visited, currently observed at rank `100`
-  - wealth: off the visible board, estimated `33,015` total wealth with a current gap of about `2,656`
-  - trading: still off the visible board
+  - exploration: on the visible board at `84` known sectors, currently observed at rank `77`
+  - wealth: on the visible board, currently observed at rank `92`
+  - trading: on the visible board, currently observed at rank `49` with `123,386` total trade volume across `141` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
 - Current frontier:
-  - keep converting the newly mapped live trade ladder into a reusable headless loop
-  - push wealth onto the visible board, likely by combining personal profits with corporation-ship work
-  - continue climbing trading toward the visible board now that the capital base is over `1,000`
-  - revisit unowned-ship recovery later; it is still the highest-leverage unresolved wealth surface
+  - keep all three leaderboard categories visible while climbing deeper into each board
+  - use the corporation probe for exploration and the personal ship for repeated high-volume trading
+  - save toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`
+  - revisit corporation-hauler trading and the unowned-ship mismatch after the current route grind
 
 ## Timeline
 
@@ -142,6 +142,47 @@ in the live Gradient Bang production game.
   - stopped at sector `472` when warp fell below the configured threshold
   - final live state after that repetition was `2,015` credits and `149` warp
 
+### Logistics Surfaces And Leaderboard Strategy
+
+- Added first-class `session-recharge-warp` and `session-transfer-credits` commands after proving both flows live:
+  - recharged the personal ship to full at the mega-port in sector `472`
+  - transferred credits directly to `gbheadless Auto Hauler 1`
+- Read the upstream leaderboard SQL to stop optimizing blindly:
+  - `exploration` unions personal and corporation map knowledge
+  - `wealth` includes the full corporation fleet
+  - `trading` is personal-only and ranked by 7-day `total_trade_volume`
+- That changed the live strategy:
+  - corporation probes handle exploration
+  - the personal ship chases repeated high-priced volume
+  - wealth rises as a side effect of trading profits and existing corp assets
+- The older `674 -> 907 -> 674` route degraded when sector `674` stopped reliably selling the return-leg commodity, so broad freeform trade prompts were demoted.
+- Added `session-trade-route-loop` as the durable replacement: a fixed `move -> buy -> move -> sell` runner built from watched player tasks.
+- The first validation cycle on the live `3786 -> 1009` route succeeded exactly as intended:
+  - buy `30` Neuro Symbolics at sector `3786`
+  - return to sector `1009`
+  - sell all `30` for a clean `+150` credits
+
+### Visible Leaderboards
+
+- Used a `10`-sector probe exploration task from sector `3348` to sector `4633`, pushing total known sectors from `59` to `69`.
+- Ran the first long deterministic trade push on the live `3786 -> 1009` Neuro Symbolics route.
+  - the first long run completed `9` cycles before a single move task failed
+  - despite the stop, it still raised the personal ship from `3,307` to `4,177` credits
+  - this exposed the need for step retries inside the route loop
+- Hardened `session-trade-route-loop` with per-step retries, then sent the probe out again for `15` more new sectors, ending in sector `446`.
+- Ran a retried `6`-cycle personal trade loop that finished cleanly:
+  - `+630` credits
+  - `36` warp spent
+  - final state `4,807` credits at sector `1009`
+- Finished with a short `2`-cycle wealth push:
+  - `+180` credits
+  - final state `4,987` credits and `278` warp at sector `1009`
+- Latest confirmed live leaderboard state:
+  - exploration visible at rank `77`
+  - wealth visible at rank `92`
+  - trading visible at rank `49` with `123,386` volume across `141` trades
+- At this point the account is visibly represented on all three regular-player leaderboard categories through the headless client alone.
+
 ### Post-Tutorial Findings
 
 - Asked the live bot for further normal-player goals after finishing the tutorial lines.
@@ -153,6 +194,9 @@ in the live Gradient Bang production game.
 - Tried the exact website prompt against fresh live unowned-ship IDs.
 - Current live result: the bot starts a player-ship task, treats the request like salvage lookup, and fails with `404 Salvage not available`.
 - This is now a documented live production mismatch, not just an unimplemented client surface.
+- Long runs also exposed one session-auth quirk:
+  - after repeated live `/start` calls, fresh sessions sometimes began returning `401`
+  - `auth-sync` refreshed the repo `.env`, but the reliable immediate workaround was to pass a newly issued access token inline for the final summary reads
 
 ## Personal Impressions
 
@@ -161,5 +205,9 @@ From this headless playthrough, the game is more interesting than a conventional
 The parts I like most are the moments where the systems click together: buying into a better ship, forming a corporation, then tasking autonomous probes and seeing real `task.start` and `task.finish` events come back from the live world. That makes the game feel less like a static economy sim and more like a lightweight operations sandbox.
 
 The rough edges are very visible. Some surfaces are elegant when they work, but others are brittle, ambiguous, or route to the wrong backend behavior, as with the current unowned-ship collection mismatch. That said, those edges are also revealing: they make it clear where the game is genuinely systemic and where it is still held together by prompt conventions and hidden assumptions.
+
+The leaderboard split made the midgame much better than the tutorial alone suggested. Having personal trading count separately from corporation exploration forces a real division of labor: the human-run ship becomes the profit engine while the probe becomes the map-expansion tool. That is a clever structure because it makes automation feel like playing the game correctly, not just scripting around it.
+
+The current weakness is operational brittleness rather than game design. Long-lived auth, occasional task failures, and prompt-surface mismatches still need smoothing out before this feels like a truly durable "forever loop" client. But once the three leaderboard categories all became visible from the headless path, the game started to feel less like a guided experiment and more like an open-ended systems game with a real next layer.
 
 Overall impression: the core idea is strong. It feels novel, a little weird in a good way, and substantially more interesting than the average browser game because the player is effectively learning how to operate an in-world organization through language and automation.
