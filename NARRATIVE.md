@@ -11,18 +11,18 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `3124`
-- Personal ship credits: `6,187`
-- Personal ship warp: `377/500`
+- Personal ship sector: `780`
+- Personal ship credits: `6,787`
+- Personal ship warp: `332/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
   - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-  - `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `2984` with `473/500` warp
+  - `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `4794` with `455/500` warp
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `319` known sectors, currently observed at rank `37`
-  - wealth: on the visible board, currently observed at rank `69` with visible row value `42,787`
-  - trading: on the visible board, currently observed at rank `28` with `245,438` total trade volume across `281` trades
+  - exploration: on the visible board at `333` known sectors, currently observed at rank `35`
+  - wealth: on the visible board, currently observed at rank `68` with visible row value `43,387`
+  - trading: on the visible board, currently observed at rank `28` with `251,558` total trade volume across `289` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
@@ -32,6 +32,7 @@ in the live Gradient Bang production game.
   - use port-code-aware, map-backed route selection instead of naive price comparisons
   - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
   - use `session-wealth-loadout` when the ship is parked on a cheap legal seller and the immediate goal is wealth-board rank instead of realized profit
+  - keep trading loops short and observable; the current `1469 -> 780` QF route is productive, but large batches can still strand the ship mid-cycle with a loaded hold
   - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
   - use cheap cargo as a wealth-board lever, because the live leaderboard currently values cargo at a flat `100` credits per unit
   - prefer fresh `1000`-credit autonomous probes over long rescue chains when the goal is exploration rank
@@ -534,6 +535,48 @@ in the live Gradient Bang production game.
     jump without committing to a long trade cycle
   - trading remains the slowest board to move because it needs larger absolute
     volume gains than the other two
+
+### Short QF Volume Batches, Wealth Recovery, And Another Probe Push
+
+- Took the next exploration tie-break first:
+  - one more bounded probe run moved known sectors `319 -> 322`
+  - that was enough to move the visible exploration board from rank `37` to rank `36`
+- Then tried to convert the loaded QF hold into trading volume.
+- Important durable finding:
+  - exact cross-sector trade orders still are not a reliable "travel there and sell" surface from the wrong port
+  - the deterministic path remains `session-move-to-sector` first, then `session-trade-order` once already parked on the valid buyer/seller
+- Used that pattern live:
+  - moved the Kestrel from sector `3124` to sector `780`
+  - sold `30` QF at `28` for `840` credits
+- Then tested the current best visible QF volume grind directly:
+  - route: `1469 -> 780`
+  - commodity: `Quantum Foam`
+  - goal: lift the trading board without having to rediscover a route
+- The result was mixed but useful:
+  - the route loop is productive
+  - but large batches are still not durable enough
+  - in the live `9`-cycle attempt, only the early cycles finished cleanly before the ship ended up loaded in sector `1469`
+- Recovered the dirty mid-cycle state the same durable way:
+  - moved back to sector `780`
+  - sold the stranded `30` QF hold for another `840`
+- The forced leaderboard refresh after that recovery showed:
+  - trading up to `251,228`, still rank `28`, now only `9,716` behind the next visible row
+  - wealth temporarily down to rank `74` because the cash-only ship no longer had a cheap full hold boosting board value
+- Used `session-wealth-loadout` immediately at sector `780` to restore that loss:
+  - the helper correctly chose `Retro Organics` at `11`
+  - bought a full `30` hold for `330`
+  - visible wealth recovered and improved to rank `68` at `43,387`
+  - trading also ticked to `251,558`
+- Finished the pass with another exploration push while the personal ship stayed parked with the wealth-preserving hold:
+  - the probe overshot the `9`-sector target and explored `11` new sectors
+  - known sectors rose `322 -> 333`
+  - corp sectors visited rose `316 -> 327`
+  - the probe ended in sector `4794` with `455/500` warp
+  - visible exploration improved again from rank `36` to rank `35`
+- Current strategic read:
+  - exploration remains the cleanest board to push because probe runs compound without disturbing the personal ship
+  - `session-wealth-loadout` is now proven as the fastest wealth recovery tool after any trading liquidation
+  - trading still wants shorter explicit route batches, not one long unattended run
 
 ## Personal Impressions
 

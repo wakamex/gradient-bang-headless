@@ -25,7 +25,7 @@ The intent is not just to scaffold code, but to keep a running record of:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
    - exploration through repeated `session-corp-explore-loop` frontier runs
-   - trading through the best visible route from `session-auto-trade-loop --goal trading`
+   - trading through the best visible route from `session-auto-trade-loop --goal trading`, but in short explicit batches instead of one long unattended loop
    - wealth through `session-wealth-loadout` at the cheapest legal current port, plus existing corp assets
    - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
    - short-term operational constraint: the personal ship is now warp-limited, so exploration is the cheapest current lever until the ship reaches a recharge path again
@@ -218,22 +218,22 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `3124`
-- personal ship credits: `6187`
-- personal ship warp power: `377`
+- personal ship sector: `780`
+- personal ship credits: `6787`
+- personal ship warp power: `332`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `2984` with `473/500` warp
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) active in sector `4794` with `455/500` warp
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
-- cargo: `30` Quantum Foam
+- cargo: `30` Retro Organics
 - fighters: `300`
-- known sectors: `319`
-- corporation sectors visited: `313`
+- known sectors: `333`
+- corporation sectors visited: `327`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `319` known sectors, currently observed at rank `37`
-- visible trading board entry: `245438` total volume, currently observed at rank `28`
-- visible wealth board entry: currently observed at rank `69` with visible row value `42787`
+- visible exploration board entry: `333` known sectors, currently observed at rank `35`
+- visible trading board entry: `251558` total volume, currently observed at rank `28`
+- visible wealth board entry: currently observed at rank `68` with visible row value `43387`
 
 Latest live progression proved:
 
@@ -444,6 +444,36 @@ Latest live progression proved:
   - corporation sectors visited `312 -> 313`
   - `gbheadless Auto Probe I` moved `1808 -> 2984`
   - visible exploration improved `38 -> 37`
+- pushed exploration again with one more bounded run:
+  - known sectors `319 -> 322`
+  - visible exploration improved `37 -> 36`
+- confirmed the next trading execution rule the hard way:
+  - exact trade orders still work best once the ship is already on the valid
+    buy/sell port
+  - cross-sector liquidation stayed inert until the Kestrel was moved
+    explicitly to the buyer first
+- used that deterministic move-then-sell path live at sector `780`:
+  - sold `30` QF for `840` credits
+- tested the visible `1469 -> 780` QF volume route in a longer batch:
+  - the route is productive
+  - but long unattended loops are still not durable enough
+  - the `9`-cycle run stranded the ship loaded in sector `1469`, confirming
+    that trading should stay in short explicit batches for now
+- recovered that dirty mid-cycle state cleanly:
+  - moved back to `780`
+  - sold the loaded `30` QF hold for another `840`
+  - visible trading climbed to `251228`, cutting the next-row gap to `9716`
+- used `session-wealth-loadout` immediately at sector `780` to restore the
+  leaderboard loss from liquidating cargo:
+  - bought `30` RO at `11`
+  - visible wealth recovered and improved to `43387` at rank `68`
+  - visible trading also ticked to `251558`
+- finished the pass with another probe run:
+  - requested `9` new sectors, observed `11`
+  - known sectors `322 -> 333`
+  - corporation sectors visited `316 -> 327`
+  - `gbheadless Auto Probe I` moved `3293 -> 4794`
+  - visible exploration improved `36 -> 35`
 
 Interpretation:
 
@@ -459,7 +489,7 @@ Interpretation:
 - the next concrete live-game push is now:
   - keep using fresh `1000`-credit probes from a mega-port when the goal is exploration rank
   - keep using `session-wealth-loadout` whenever the goal is immediate wealth rank and the ship is parked on a cheap legal seller
-  - keep the `1413 <-> 3124` RO route as the current best live trading-volume grind
+  - keep the current QF trading route in short explicit batches; the route is still good, but the long unattended loop is not
   - harden corp-task watching and large-batch trade looping so the productive live paths are also operationally clean
   - either make unowned-ship collection work or document it as a live bot/path
     bug with clear reproduction
