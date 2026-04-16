@@ -461,10 +461,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Connect a session, transfer credits to another ship in-sector via the proven player-task prompt, and watch task lifecycle events",
     )
     _add_session_connect_args(session_transfer_credits)
+    session_transfer_credits.set_defaults(wait_for_finish=True)
     session_transfer_credits.add_argument("--amount", required=True, type=int)
     session_transfer_credits.add_argument("--to-ship-name", required=True)
     session_transfer_credits.add_argument("--to-ship-id")
     session_transfer_credits.add_argument("--wait-for-finish", action="store_true")
+    session_transfer_credits.add_argument(
+        "--no-wait-for-finish",
+        action="store_false",
+        dest="wait_for_finish",
+        help="Return after task start instead of waiting for task completion",
+    )
     session_transfer_credits.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
     session_transfer_warp = sub.add_parser(
@@ -472,10 +479,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Connect a session, transfer warp power to another ship in-sector via the proven player-task prompt, and watch task lifecycle events",
     )
     _add_session_connect_args(session_transfer_warp)
+    session_transfer_warp.set_defaults(wait_for_finish=True)
     session_transfer_warp.add_argument("--units", required=True, type=int)
     session_transfer_warp.add_argument("--to-ship-name", required=True)
     session_transfer_warp.add_argument("--to-ship-id")
     session_transfer_warp.add_argument("--wait-for-finish", action="store_true")
+    session_transfer_warp.add_argument(
+        "--no-wait-for-finish",
+        action="store_false",
+        dest="wait_for_finish",
+        help="Return after task start instead of waiting for task completion",
+    )
     session_transfer_warp.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
     session_trade_route_loop = sub.add_parser(
@@ -683,12 +697,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Connect a session, task a corporation ship to transfer warp power in-sector, and watch task lifecycle events",
     )
     _add_session_connect_args(session_corp_transfer_warp)
+    session_corp_transfer_warp.set_defaults(wait_for_finish=True)
     session_corp_transfer_warp.add_argument("--ship-name", required=True)
     session_corp_transfer_warp.add_argument("--ship-id")
     session_corp_transfer_warp.add_argument("--units", required=True, type=int)
     session_corp_transfer_warp.add_argument("--to-ship-name", required=True)
     session_corp_transfer_warp.add_argument("--to-ship-id")
     session_corp_transfer_warp.add_argument("--wait-for-finish", action="store_true")
+    session_corp_transfer_warp.add_argument(
+        "--no-wait-for-finish",
+        action="store_false",
+        dest="wait_for_finish",
+        help="Return after task start instead of waiting for task completion",
+    )
     session_corp_transfer_warp.add_argument("--event-timeout-seconds", type=float, default=120.0)
 
     session_collect_unowned_ship = sub.add_parser(
