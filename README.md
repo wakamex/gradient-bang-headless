@@ -238,6 +238,13 @@ gb-headless session-corp-move-to-sector \
   --ship-name "gbheadless Auto Hauler 1" \
   --ship-id c7c348 \
   --sector-id 3341
+gb-headless session-corp-explore-loop \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --ship-name "gbheadless Auto Probe I" \
+  --start-sector 3513 \
+  --new-sectors-per-run 10 \
+  --max-runs 1
 gb-headless call leaderboard_resources --method GET
 gb-headless status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless plot-course --to-sector 301 --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
@@ -282,6 +289,10 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-corp-explore-loop` is the preferred exploration grinder. It builds
   the proven probe-frontier objective, watches real corp-ship task events, and
   accepts observed sector/map progress even when one lifecycle event is late.
+  It now also accepts `--start-sector` so an idle probe can be reset to a
+  remembered frontier before the bounded explore run begins. Recent live runs
+  show that this solves the dead-pocket problem, but it still depends on
+  picking a sector whose local map is not already exhausted.
 - `session-player-task` does the same for the personal ship. It is the
   preferred surface for short deterministic bot-driven objectives like
   single-route trade loops or move-and-sell steps.

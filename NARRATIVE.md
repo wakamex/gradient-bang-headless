@@ -792,6 +792,53 @@ in the live Gradient Bang production game.
   - but leaderboard confirmation lags behind corp-ship state, so the operator
     should trust `ships.list` first and board refreshes second
 
+### Frontier Reset Became A First-Class Surface
+
+- I kept using the exact `1808 <-> 256` shuttle because it was still the
+  cleanest live way to move both personal boards without trusting a broad loop.
+- The exact sequence this pass was:
+  - sold `30` `NS` at sector `256` for `43`
+  - bought `30` `QF` at sector `256`
+  - moved `256 -> 1808`
+  - sold `30` `QF` at `31`
+  - bought `30` `NS` at sector `1808`
+- That pushed the visible boards to:
+  - exploration `344`, visible rank `34`, `9` behind the next visible row
+  - trading `289642`, visible rank `27`, `472` behind the next visible row
+  - wealth `46179`, visible rank `62`, `472` behind the next visible row
+- Exploration stayed harder than the economy. The important diagnosis was that
+  `gbheadless Auto Probe I` was no longer failing because corp movement was
+  broken; it was failing because the probe had drifted into a dead local pocket.
+- I proved that by manually moving the probe from sector `1244` back to sector
+  `3513`, then retrying the bounded explore task from there.
+- That recovery pattern was strong enough to write into the client:
+  - `session-corp-explore-loop` now accepts `--start-sector`
+  - it first resets the probe to a remembered frontier sector
+  - then it starts the bounded exploration task from that frontier
+  - the result object now includes both the `frontier_reset` and the follow-on
+    explore attempt
+- Live proof:
+  - the new surface moved `gbheadless Auto Probe I` from sector `2140` back to
+    sector `3513`
+  - then launched the next explore run immediately
+  - I pushed it once more with `--start-sector 2814`, which reset the probe
+    from sector `3513` to sector `2814` and then started the follow-on explore
+    task again
+  - that task later advanced the probe to sector `3883` with an active task id
+    and `404/500` warp
+- The remaining exploration lesson is sharper now:
+  - remembered frontier reset is necessary
+  - but not every remembered frontier still yields new account knowledge
+  - the clearest evidence yet is that the probe's own local maps around
+    sectors `3513`, `2814`, and `3883` all reported `0` unvisited sectors
+  - the next exploration improvement needs better frontier selection, not just
+    better task watching
+
+The game feels better when the friction is in choosing the next frontier rather
+than in fighting the control surface. Trading is now mostly an execution
+problem. Exploration still feels like genuine operations work because the hard
+part is figuring out where the map is actually still open.
+
 ## Personal Impressions
 
 From this headless playthrough, the game is more interesting than a conventional space-trading grind because the interface is part of the game. The strongest idea here is that progress comes from learning how to drive an agent-mediated world, not just from clicking faster through menus.

@@ -529,13 +529,15 @@ Latest live progression proved:
 Current live state after this pass:
 
 - Kestrel in sector `1808`
-- `9369` credits
-- `30` `RO`
-- `197/500` warp
-- `gbheadless Auto Probe I` in sector `3336` with `421/500` warp
+- `9579` credits
+- `30` `NS`
+- `167/500` warp
+- `gbheadless Auto Probe I` last observed in sector `3883` with an active
+  explore task and `404/500` warp after a frontier-reset run through sector
+  `2814`
 - exploration `344`, visible rank `34`
-- trading `271312`, visible rank `27`
-- wealth `45969`, visible rank `64`
+- trading `289642`, visible rank `27`
+- wealth `46179`, visible rank `62`
 
 Interpretation:
 
@@ -561,6 +563,9 @@ Interpretation:
     repeat` sequence, not the new all-in-one helper yet
   - prefer `QF` on `256 -> 1808` and `NS` on `1808 -> 256` when the goal is the
     best combined push on wealth plus trading volume
+  - use `session-corp-explore-loop --start-sector <remembered_frontier>` when
+    a probe is idle in a dead local pocket; frontier reset is now the first
+    recovery step before retrying bounded exploration
   - treat `session-shuttle-loop` as a hardening target, not the canonical live
     route surface, until its mid-route sell/load recovery matches the low-level
     commands
@@ -612,6 +617,35 @@ Latest production-proven additions and findings:
   - the board had not refreshed upward yet
   - the ship still carried a live `current_task_id`, reinforcing that corp
     movement often outruns the bounded watcher and the public leaderboard refresh
+- kept grinding the exact `1808 <-> 256` shuttle with low-level orders:
+  - sold `30` `NS` at sector `256` for `43`
+  - bought `30` `QF` at sector `256`
+  - moved `256 -> 1808`
+  - sold `30` `QF` at `31`
+  - bought `30` `NS` at sector `1808`
+- that moved the visible boards to:
+  - exploration `344`, rank `34`, `9` behind the next visible row
+  - trading `289642`, rank `27`, `472` behind the next visible row
+  - wealth `46179`, rank `62`, `472` behind the next visible row
+- added `--start-sector` to `session-corp-explore-loop` and proved the new
+  reset-first exploration flow live:
+  - manually verified `session-corp-move-to-sector` could restore
+    `gbheadless Auto Probe I` from sector `1244` back to sector `3513`
+  - then proved the new one-shot surface could do the same reset from sector
+    `2140` before issuing the next bounded explore task
+  - then proved it again from sector `3513` to sector `2814`, with the follow-on
+    explore task advancing the probe onward to sector `3883`
+  - the new surface now returns both `frontier_reset` and the follow-on explore
+    attempt in one result object
+- latest exploration finding:
+  - remembered frontier reset is necessary, but not sufficient
+  - the probe now restarts cleanly from remembered sectors like `3513` and
+    `2814`, yet visible exploration still stayed flat at `344`
+  - the latest task output reported local maps around those restart sectors and
+    the follow-on sector `3883` as `0` unvisited, which is the clearest signal
+    yet that these remembered frontiers are exhausted
+  - the remaining exploration problem is frontier detection, not corp movement
+    or task dispatch
 
 ## User-Facing Surface Tracking
 
