@@ -484,6 +484,25 @@ def build_parser() -> argparse.ArgumentParser:
     session_liquidate_cargo.add_argument("--map-max-sectors", type=int, default=500)
     session_liquidate_cargo.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
+    session_load_cargo = sub.add_parser(
+        "session-load-cargo",
+        help="Connect a session and buy a specific commodity at the current port with an exact trade order",
+    )
+    _add_session_connect_args(session_load_cargo)
+    session_load_cargo.add_argument(
+        "--commodity",
+        required=True,
+        choices=["quantum_foam", "retro_organics", "neuro_symbolics"],
+    )
+    session_load_cargo.add_argument("--quantity", type=int)
+    session_load_cargo.set_defaults(wait_for_task_finish=True)
+    session_load_cargo.add_argument(
+        "--wait-for-task-finish",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_load_cargo.add_argument("--event-timeout-seconds", type=float, default=45.0)
+
     session_wealth_loadout = sub.add_parser(
         "session-wealth-loadout",
         help="Connect a session and buy the cheapest currently sellable cargo to maximize immediate leaderboard wealth",
@@ -1791,6 +1810,28 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-load-cargo":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_load_cargo(
+                bridge,
+                commodity=args.commodity,
+                quantity=args.quantity,
+                wait_for_finish=args.wait_for_task_finish,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-wealth-loadout":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
@@ -2874,6 +2915,12 @@ def _status_snapshot_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
             and isinstance(sector.get("port", {}).get("prices"), dict)
             else {}
         ),
+        "port_stock": (
+            sector.get("port", {}).get("stock")
+            if isinstance(sector, dict) and isinstance(sector.get("port"), dict)
+            and isinstance(sector.get("port", {}).get("stock"), dict)
+            else {}
+        ),
         "ship_id": ship.get("ship_id") if isinstance(ship, dict) else None,
         "ship_name": ship.get("ship_name") if isinstance(ship, dict) else None,
         "ship_credits": ship.get("credits") if isinstance(ship, dict) else None,
@@ -3416,6 +3463,71 @@ def _select_wealth_loadout(summary: dict[str, Any]) -> dict[str, Any]:
     return choices[0]
 
 
+def _select_explicit_loadout(
+    summary: dict[str, Any],
+    *,
+    commodity: str,
+    quantity: int | None,
+) -> dict[str, Any]:
+    port_code = summary.get("port_code")
+    if not _port_allows_buy(port_code, commodity):
+        raise HeadlessBridgeError(
+            "session-load-cargo",
+            f"current port does not sell {commodity}",
+            payload={"summary": summary},
+        )
+
+    empty_holds = _coerce_int(summary.get("empty_holds"))
+    ship_credits = _coerce_int(summary.get("ship_credits"))
+    if empty_holds <= 0:
+        raise HeadlessBridgeError("session-load-cargo", "no empty holds available")
+    if ship_credits <= 0:
+        raise HeadlessBridgeError("session-load-cargo", "no ship credits available")
+
+    price = _port_price(summary, commodity)
+    if price is None or price <= 0:
+        raise HeadlessBridgeError(
+            "session-load-cargo",
+            f"no current port price for {commodity}",
+            payload={"summary": summary},
+        )
+
+    max_quantity = min(empty_holds, ship_credits // price)
+    stock = _port_stock(summary, commodity)
+    if stock is not None and stock >= 0:
+        max_quantity = min(max_quantity, stock)
+    if max_quantity <= 0:
+        raise HeadlessBridgeError(
+            "session-load-cargo",
+            f"cannot afford any {commodity} at the current port",
+            payload={"summary": summary},
+        )
+
+    selected_quantity = max_quantity if quantity is None else quantity
+    if selected_quantity <= 0:
+        raise HeadlessBridgeError("session-load-cargo", "--quantity must be > 0")
+    if selected_quantity > max_quantity:
+        raise HeadlessBridgeError(
+            "session-load-cargo",
+            f"requested quantity exceeds current capacity/credits/stock for {commodity}",
+            payload={
+                "commodity": commodity,
+                "requested_quantity": selected_quantity,
+                "max_quantity": max_quantity,
+                "price_per_unit": price,
+                "stock_available": stock,
+            },
+        )
+
+    return {
+        "commodity": commodity,
+        "price_per_unit": price,
+        "quantity": selected_quantity,
+        "max_quantity": max_quantity,
+        "stock_available": stock,
+    }
+
+
 def _select_loaded_commodity(summary: dict[str, Any], preferred: str | None) -> dict[str, Any]:
     cargo = summary.get("cargo")
     if not isinstance(cargo, dict):
@@ -3575,6 +3687,55 @@ async def _run_wealth_loadout(
             bridge,
             timeout=min(timeout, 30.0),
             context="session-wealth-loadout",
+        )
+    return {
+        "selection": selection,
+        "prompt": prompt,
+        "initial_status": initial_status,
+        "result": action_result,
+        "watch": watch_result,
+        "final_status": final_status,
+    }
+
+
+async def _run_load_cargo(
+    bridge: HeadlessBridgeProcess,
+    *,
+    commodity: str,
+    quantity: int | None,
+    wait_for_finish: bool,
+    timeout: float,
+) -> dict[str, Any]:
+    initial_status = await _fetch_status_snapshot_with_retries(
+        bridge,
+        timeout=min(timeout, 30.0),
+        context="session-load-cargo",
+    )
+    initial_summary = initial_status["summary"]
+    selection = _select_explicit_loadout(
+        initial_summary,
+        commodity=commodity,
+        quantity=quantity,
+    )
+    prompt = build_trade_order_prompt(
+        trade_type="BUY",
+        quantity=selection["quantity"],
+        commodity=selection["commodity"],
+        price_per_unit=selection["price_per_unit"],
+    )
+    action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
+    watch_result = None
+    final_status = initial_status
+    if wait_for_finish:
+        watch_result = await _watch_player_task(
+            bridge,
+            wait_for_finish=True,
+            timeout=timeout,
+        )
+        final_status = await _fetch_status_snapshot_with_retries(
+            bridge,
+            timeout=min(timeout, 30.0),
+            context="session-load-cargo",
         )
     return {
         "selection": selection,
@@ -4224,6 +4385,14 @@ def _port_price(summary: dict[str, Any], commodity: str) -> int | None:
         return None
     price = port_prices.get(commodity)
     return int(price) if isinstance(price, int) else None
+
+
+def _port_stock(summary: dict[str, Any], commodity: str) -> int | None:
+    port_stock = summary.get("port_stock")
+    if not isinstance(port_stock, dict):
+        return None
+    stock = port_stock.get(commodity)
+    return int(stock) if isinstance(stock, int) else None
 
 
 def _build_route_buy_prompt(summary: dict[str, Any], commodity: str) -> str:
