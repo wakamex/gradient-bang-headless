@@ -605,6 +605,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_session_connect_args(session_corp_explore_loop)
     session_corp_explore_loop.add_argument("--ship-name", required=True)
     session_corp_explore_loop.add_argument("--ship-id")
+    session_corp_explore_loop.add_argument(
+        "--start-sector",
+        type=int,
+        help="Optional known frontier sector to move the corporation ship to before starting exploration",
+    )
     session_corp_explore_loop.add_argument("--new-sectors-per-run", type=int, default=20)
     session_corp_explore_loop.add_argument("--max-runs", type=int)
     session_corp_explore_loop.add_argument("--target-known-sectors", type=int)
@@ -2049,6 +2054,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                 bridge,
                 ship_id=args.ship_id,
                 ship_name=args.ship_name,
+                start_sector=args.start_sector,
                 new_sectors_per_run=args.new_sectors_per_run,
                 max_runs=args.max_runs,
                 target_known_sectors=args.target_known_sectors,
@@ -4838,6 +4844,7 @@ async def _run_corporation_explore_loop(
     *,
     ship_id: str | None,
     ship_name: str,
+    start_sector: int | None,
     new_sectors_per_run: int,
     max_runs: int | None,
     target_known_sectors: int | None,
@@ -4846,6 +4853,8 @@ async def _run_corporation_explore_loop(
 ) -> dict[str, Any]:
     if new_sectors_per_run <= 0:
         raise HeadlessBridgeError("session-corp-explore-loop", "--new-sectors-per-run must be > 0")
+    if start_sector is not None and start_sector <= 0:
+        raise HeadlessBridgeError("session-corp-explore-loop", "--start-sector must be > 0")
     if max_runs is not None and max_runs <= 0:
         raise HeadlessBridgeError("session-corp-explore-loop", "--max-runs must be > 0")
     if target_known_sectors is not None and target_known_sectors <= 0:
@@ -4865,8 +4874,35 @@ async def _run_corporation_explore_loop(
     )
     current_summary = initial_status["summary"]
     current_ship = initial_ship["ship"]
+    frontier_reset = None
     runs: list[dict[str, Any]] = []
     stop_reason = "not_started"
+
+    if start_sector is not None and current_ship.get("sector") != start_sector:
+        frontier_reset = await _run_corporation_move_to_sector(
+            bridge,
+            ship_id=ship_id,
+            ship_name=ship_name,
+            sector_id=start_sector,
+            max_segments=12,
+            timeout=timeout,
+        )
+        current_ship = frontier_reset["final_ship"]
+        if current_ship.get("sector") != start_sector:
+            return {
+                "stop_reason": "frontier_reset_failed",
+                "task_description": task_description,
+                "initial_status": initial_status,
+                "initial_ship": initial_ship,
+                "frontier_reset": frontier_reset,
+                "runs": runs,
+                "final_status": {
+                    "summary": current_summary,
+                },
+                "final_ship": current_ship,
+            }
+        refreshed_status = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
+        current_summary = refreshed_status["summary"]
 
     while True:
         known_sectors = current_summary.get("known_sectors")
@@ -4954,6 +4990,7 @@ async def _run_corporation_explore_loop(
         "task_description": task_description,
         "initial_status": initial_status,
         "initial_ship": initial_ship,
+        "frontier_reset": frontier_reset,
         "runs": runs,
         "final_status": {
             "summary": current_summary,
