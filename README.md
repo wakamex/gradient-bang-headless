@@ -325,6 +325,11 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   step is to restock a specific commodity at the current port. It validates the
   live port directionality, price, credits, empty holds, and visible stock
   before sending the exact frontend-style buy order.
+- `session-shuttle-loop` is a new fixed two-sector, two-commodity wrapper
+  around those exact trade steps. It is useful for reproducing and hardening
+  the live shuttle path, but the current production-reliable route surface is
+  still the explicit `session-load-cargo -> session-move-to-sector ->
+  session-liquidate-cargo` sequence.
 - `session-auto-trade-loop` is the preferred execution surface once a goal is
   clear. It uses `session-trade-opportunities` internally, picks the current
   best visible route for `wealth`, `trading`, or raw `profit`, then runs the

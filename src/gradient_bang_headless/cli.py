@@ -441,6 +441,34 @@ def build_parser() -> argparse.ArgumentParser:
     session_trade_route_loop.add_argument("--step-retries", type=int, default=1)
     session_trade_route_loop.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
+    session_shuttle_loop = sub.add_parser(
+        "session-shuttle-loop",
+        help="Connect a session and run a two-leg shuttle loop between fixed sectors with exact trade orders on both ends",
+    )
+    _add_session_connect_args(session_shuttle_loop)
+    session_shuttle_loop.add_argument("--home-sector", required=True, type=int)
+    session_shuttle_loop.add_argument("--away-sector", required=True, type=int)
+    session_shuttle_loop.add_argument(
+        "--home-commodity",
+        required=True,
+        choices=["quantum_foam", "retro_organics", "neuro_symbolics"],
+    )
+    session_shuttle_loop.add_argument(
+        "--away-commodity",
+        required=True,
+        choices=["quantum_foam", "retro_organics", "neuro_symbolics"],
+    )
+    session_shuttle_loop.add_argument("--max-cycles", type=int)
+    session_shuttle_loop.add_argument("--target-credits", type=int)
+    session_shuttle_loop.add_argument("--min-warp", type=int, default=50)
+    session_shuttle_loop.add_argument("--step-retries", type=int, default=1)
+    session_shuttle_loop.add_argument(
+        "--finish-loaded-home",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    session_shuttle_loop.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
     session_trade_order = sub.add_parser(
         "session-trade-order",
         help="Connect a session and send the exact website trade-order prompt",
@@ -1743,6 +1771,34 @@ async def dispatch(args: argparse.Namespace) -> int:
                 target_credits=args.target_credits,
                 min_warp=args.min_warp,
                 step_retries=args.step_retries,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-shuttle-loop":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_shuttle_loop(
+                bridge,
+                home_sector=args.home_sector,
+                away_sector=args.away_sector,
+                home_commodity=args.home_commodity,
+                away_commodity=args.away_commodity,
+                max_cycles=args.max_cycles,
+                target_credits=args.target_credits,
+                min_warp=args.min_warp,
+                step_retries=args.step_retries,
+                finish_loaded_home=args.finish_loaded_home,
                 timeout=args.event_timeout_seconds,
             )
             print(
@@ -4395,23 +4451,28 @@ def _port_stock(summary: dict[str, Any], commodity: str) -> int | None:
     return int(stock) if isinstance(stock, int) else None
 
 
-def _build_route_buy_prompt(summary: dict[str, Any], commodity: str) -> str:
-    price = _port_price(summary, commodity)
-    empty_holds = summary.get("empty_holds")
-    credits = summary.get("ship_credits")
-    if isinstance(price, int) and price > 0 and isinstance(empty_holds, int) and empty_holds > 0 and isinstance(credits, int):
-        quantity = min(empty_holds, credits // price)
-        if quantity > 0:
-            return build_trade_order_prompt(
-                trade_type="BUY",
-                quantity=quantity,
-                commodity=commodity,
-                price_per_unit=price,
-            )
-    return build_buy_max_commodity_prompt(commodity=commodity)
+def _loaded_route_commodity(summary: dict[str, Any], commodities: tuple[str, ...]) -> str | None:
+    loaded = [commodity for commodity in commodities if _cargo_units(summary, commodity) > 0]
+    if len(loaded) > 1:
+        raise HeadlessBridgeError(
+            "session-shuttle-loop",
+            "ship is carrying multiple route commodities",
+            payload={"loaded": loaded, "summary": summary},
+        )
+    return loaded[0] if loaded else None
 
 
-def _build_route_sell_prompt(summary: dict[str, Any], commodity: str) -> str:
+def _build_exact_buy_prompt(summary: dict[str, Any], commodity: str) -> str:
+    selection = _select_explicit_loadout(summary, commodity=commodity, quantity=None)
+    return build_trade_order_prompt(
+        trade_type="BUY",
+        quantity=selection["quantity"],
+        commodity=commodity,
+        price_per_unit=selection["price_per_unit"],
+    )
+
+
+def _build_exact_sell_prompt(summary: dict[str, Any], commodity: str) -> str:
     price = _port_price(summary, commodity)
     quantity = _cargo_units(summary, commodity)
     if isinstance(price, int) and price >= 0 and quantity > 0:
@@ -4422,6 +4483,354 @@ def _build_route_sell_prompt(summary: dict[str, Any], commodity: str) -> str:
             price_per_unit=price,
         )
     return build_sell_all_commodity_prompt(commodity=commodity)
+
+
+def _build_route_buy_prompt(summary: dict[str, Any], commodity: str) -> str:
+    try:
+        return _build_exact_buy_prompt(summary, commodity)
+    except HeadlessBridgeError:
+        price = _port_price(summary, commodity)
+        empty_holds = summary.get("empty_holds")
+        credits = summary.get("ship_credits")
+        if (
+            isinstance(price, int)
+            and price > 0
+            and isinstance(empty_holds, int)
+            and empty_holds > 0
+            and isinstance(credits, int)
+        ):
+            quantity = min(empty_holds, credits // price)
+            if quantity > 0:
+                return build_trade_order_prompt(
+                    trade_type="BUY",
+                    quantity=quantity,
+                    commodity=commodity,
+                    price_per_unit=price,
+                )
+    return build_buy_max_commodity_prompt(commodity=commodity)
+
+
+def _build_route_sell_prompt(summary: dict[str, Any], commodity: str) -> str:
+    return _build_exact_sell_prompt(summary, commodity)
+
+
+async def _run_shuttle_loop(
+    bridge: HeadlessBridgeProcess,
+    *,
+    home_sector: int,
+    away_sector: int,
+    home_commodity: str,
+    away_commodity: str,
+    max_cycles: int | None,
+    target_credits: int | None,
+    min_warp: int,
+    step_retries: int,
+    finish_loaded_home: bool,
+    timeout: float,
+) -> dict[str, Any]:
+    if home_sector <= 0 or away_sector <= 0:
+        raise HeadlessBridgeError("session-shuttle-loop", "sector ids must be > 0")
+    if home_sector == away_sector:
+        raise HeadlessBridgeError("session-shuttle-loop", "home and away sectors must differ")
+    if home_commodity == away_commodity:
+        raise HeadlessBridgeError("session-shuttle-loop", "home and away commodities must differ")
+    if max_cycles is not None and max_cycles <= 0:
+        raise HeadlessBridgeError("session-shuttle-loop", "--max-cycles must be > 0")
+    if target_credits is not None and target_credits <= 0:
+        raise HeadlessBridgeError("session-shuttle-loop", "--target-credits must be > 0")
+    if min_warp < 0:
+        raise HeadlessBridgeError("session-shuttle-loop", "--min-warp must be >= 0")
+    if step_retries < 0:
+        raise HeadlessBridgeError("session-shuttle-loop", "--step-retries must be >= 0")
+
+    initial_status = await _fetch_status_snapshot(bridge, timeout=timeout)
+    current_summary = initial_status["summary"]
+    cycle_results: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+    current_cycle_start: dict[str, Any] | None = None
+    current_cycle_steps: list[dict[str, Any]] | None = None
+    stop_reason = "unknown"
+
+    async def _execute_step(
+        *,
+        step: str,
+        prompt: str,
+        validate,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        nonlocal current_summary
+        outcome = await _run_validated_player_step(
+            bridge,
+            prompt=prompt,
+            timeout=timeout,
+            retries=step_retries,
+            validate=validate,
+        )
+        result = outcome["result"]
+        after = result["status"]["summary"] if isinstance(result, dict) else current_summary
+        entry = {
+            "step": step,
+            "prompt": prompt,
+            "result": result,
+            "attempt_count": outcome["attempt_count"],
+        }
+        if isinstance(payload, dict):
+            entry.update(payload)
+        steps.append(entry)
+        if current_cycle_steps is not None:
+            current_cycle_steps.append(entry)
+        current_summary = after
+        return outcome
+
+    while True:
+        current_sector = _coerce_int(current_summary.get("sector_id"))
+        current_credits = current_summary.get("ship_credits")
+        current_warp = _status_warp(current_summary)
+        total_cargo_units = _total_cargo_units(current_summary)
+        home_units = _cargo_units(current_summary, home_commodity)
+        away_units = _cargo_units(current_summary, away_commodity)
+
+        if total_cargo_units > home_units + away_units:
+            stop_reason = "foreign_cargo_present"
+            break
+        if target_credits is not None and isinstance(current_credits, int) and current_credits >= target_credits:
+            stop_reason = "target_credits_reached"
+            break
+        if max_cycles is not None and len(cycle_results) >= max_cycles:
+            stop_reason = "max_cycles_reached"
+            break
+        if current_warp is not None and current_warp < min_warp:
+            stop_reason = "min_warp_reached"
+            break
+
+        loaded_commodity = _loaded_route_commodity(current_summary, (home_commodity, away_commodity))
+
+        if current_sector == home_sector:
+            if loaded_commodity == away_commodity:
+                if not _port_allows_sell(current_summary.get("port_code"), away_commodity):
+                    stop_reason = "invalid_home_sell_port"
+                    break
+                sell_away_outcome = await _execute_step(
+                    step="sell_away_at_home",
+                    prompt=_build_exact_sell_prompt(current_summary, away_commodity),
+                    validate=lambda summary: _cargo_units(summary, away_commodity) == 0,
+                    payload={"sector": home_sector, "commodity": away_commodity},
+                )
+                if not sell_away_outcome["success"]:
+                    recovery_result = await _recover_with_trade_order(
+                        bridge,
+                        summary=current_summary,
+                        commodity=away_commodity,
+                        timeout=timeout,
+                    )
+                    recovery_entry = {
+                        "step": "sell_away_recovery",
+                        "sector": home_sector,
+                        "commodity": away_commodity,
+                        "result": recovery_result,
+                    }
+                    steps.append(recovery_entry)
+                    if current_cycle_steps is not None:
+                        current_cycle_steps.append(recovery_entry)
+                    recovery_summary = recovery_result.get("status", {}).get("summary")
+                    if isinstance(recovery_summary, dict):
+                        current_summary = recovery_summary
+                    if _cargo_units(current_summary, away_commodity) > 0:
+                        stop_reason = "home_sell_failed"
+                        break
+                if current_cycle_start is not None:
+                    cycle_results.append(
+                        {
+                            "cycle": len(cycle_results) + 1,
+                            "home_sector": home_sector,
+                            "away_sector": away_sector,
+                            "home_commodity": home_commodity,
+                            "away_commodity": away_commodity,
+                            "start": current_cycle_start,
+                            "end": dict(current_summary),
+                            "profit": (
+                                current_summary["ship_credits"] - current_cycle_start["ship_credits"]
+                                if isinstance(current_summary.get("ship_credits"), int)
+                                and isinstance(current_cycle_start.get("ship_credits"), int)
+                                else None
+                            ),
+                            "warp_spent": (
+                                current_cycle_start["warp_power"] - current_summary["warp_power"]
+                                if isinstance(current_summary.get("warp_power"), int)
+                                and isinstance(current_cycle_start.get("warp_power"), int)
+                                else None
+                            ),
+                            "steps": list(current_cycle_steps or []),
+                        }
+                    )
+                    current_cycle_start = None
+                    current_cycle_steps = None
+                continue
+
+            if loaded_commodity is None:
+                if not _port_allows_buy(current_summary.get("port_code"), home_commodity):
+                    stop_reason = "invalid_home_buy_port"
+                    break
+                current_cycle_steps = []
+                load_home_outcome = await _execute_step(
+                    step="load_home",
+                    prompt=_build_exact_buy_prompt(current_summary, home_commodity),
+                    validate=lambda summary: _cargo_units(summary, home_commodity) > 0,
+                    payload={"sector": home_sector, "commodity": home_commodity},
+                )
+                if not load_home_outcome["success"]:
+                    stop_reason = "home_buy_failed"
+                    break
+                current_cycle_start = dict(current_summary)
+                continue
+
+            if loaded_commodity != home_commodity:
+                stop_reason = "unexpected_home_cargo_state"
+                break
+            if current_cycle_start is None:
+                current_cycle_start = dict(current_summary)
+                current_cycle_steps = []
+            move_to_away_outcome = await _execute_step(
+                step="move_to_away_sector",
+                prompt=build_move_to_sector_prompt(sector_id=away_sector),
+                validate=lambda summary: summary.get("sector_id") == away_sector,
+                payload={"sector": away_sector},
+            )
+            if not move_to_away_outcome["success"]:
+                stop_reason = "move_to_away_failed"
+                break
+            continue
+
+        if current_sector == away_sector:
+            if loaded_commodity == home_commodity:
+                if not _port_allows_sell(current_summary.get("port_code"), home_commodity):
+                    stop_reason = "invalid_away_sell_port"
+                    break
+                sell_home_outcome = await _execute_step(
+                    step="sell_home_at_away",
+                    prompt=_build_exact_sell_prompt(current_summary, home_commodity),
+                    validate=lambda summary: _cargo_units(summary, home_commodity) == 0,
+                    payload={"sector": away_sector, "commodity": home_commodity},
+                )
+                if not sell_home_outcome["success"]:
+                    recovery_result = await _recover_with_trade_order(
+                        bridge,
+                        summary=current_summary,
+                        commodity=home_commodity,
+                        timeout=timeout,
+                    )
+                    recovery_entry = {
+                        "step": "sell_home_recovery",
+                        "sector": away_sector,
+                        "commodity": home_commodity,
+                        "result": recovery_result,
+                    }
+                    steps.append(recovery_entry)
+                    if current_cycle_steps is not None:
+                        current_cycle_steps.append(recovery_entry)
+                    recovery_summary = recovery_result.get("status", {}).get("summary")
+                    if isinstance(recovery_summary, dict):
+                        current_summary = recovery_summary
+                    if _cargo_units(current_summary, home_commodity) > 0:
+                        stop_reason = "away_sell_failed"
+                        break
+                continue
+
+            if loaded_commodity is None:
+                if not _port_allows_buy(current_summary.get("port_code"), away_commodity):
+                    stop_reason = "invalid_away_buy_port"
+                    break
+                load_away_outcome = await _execute_step(
+                    step="load_away",
+                    prompt=_build_exact_buy_prompt(current_summary, away_commodity),
+                    validate=lambda summary: _cargo_units(summary, away_commodity) > 0,
+                    payload={"sector": away_sector, "commodity": away_commodity},
+                )
+                if not load_away_outcome["success"]:
+                    stop_reason = "away_buy_failed"
+                    break
+                continue
+
+            if loaded_commodity != away_commodity:
+                stop_reason = "unexpected_away_cargo_state"
+                break
+            move_to_home_outcome = await _execute_step(
+                step="move_to_home_sector",
+                prompt=build_move_to_sector_prompt(sector_id=home_sector),
+                validate=lambda summary: summary.get("sector_id") == home_sector,
+                payload={"sector": home_sector},
+            )
+            if not move_to_home_outcome["success"]:
+                stop_reason = "move_to_home_failed"
+                break
+            continue
+
+        recovery_sector = home_sector
+        recovery_step = "move_to_home_sector"
+        if loaded_commodity == home_commodity:
+            recovery_sector = away_sector
+            recovery_step = "move_to_away_sector"
+        recovery_outcome = await _execute_step(
+            step=recovery_step,
+            prompt=build_move_to_sector_prompt(sector_id=recovery_sector),
+            validate=lambda summary: summary.get("sector_id") == recovery_sector,
+            payload={"sector": recovery_sector},
+        )
+        if not recovery_outcome["success"]:
+            stop_reason = "recovery_move_failed"
+            break
+
+    final_loadout = None
+    if (
+        finish_loaded_home
+        and stop_reason in {"target_credits_reached", "max_cycles_reached", "min_warp_reached"}
+        and _coerce_int(current_summary.get("sector_id")) == home_sector
+        and _total_cargo_units(current_summary) == 0
+        and _port_allows_buy(current_summary.get("port_code"), home_commodity)
+    ):
+        final_loadout_outcome = await _run_validated_player_step(
+            bridge,
+            prompt=_build_exact_buy_prompt(current_summary, home_commodity),
+            timeout=timeout,
+            retries=step_retries,
+            validate=lambda summary: _cargo_units(summary, home_commodity) > 0,
+        )
+        final_result = final_loadout_outcome["result"]
+        if isinstance(final_result, dict):
+            current_summary = final_result["status"]["summary"]
+        final_loadout = {
+            "step": "final_home_load",
+            "result": final_result,
+            "attempt_count": final_loadout_outcome["attempt_count"],
+            "success": final_loadout_outcome["success"],
+        }
+        steps.append(final_loadout)
+        if not final_loadout_outcome["success"]:
+            stop_reason = "final_home_load_failed"
+
+    return {
+        "success": stop_reason in {
+            "target_credits_reached",
+            "max_cycles_reached",
+            "min_warp_reached",
+        },
+        "stop_reason": stop_reason,
+        "home_sector": home_sector,
+        "away_sector": away_sector,
+        "home_commodity": home_commodity,
+        "away_commodity": away_commodity,
+        "target_credits": target_credits,
+        "max_cycles": max_cycles,
+        "min_warp": min_warp,
+        "step_retries": step_retries,
+        "finish_loaded_home": finish_loaded_home,
+        "cycles_completed": len(cycle_results),
+        "initial_status": initial_status["summary"],
+        "final_status": current_summary,
+        "final_loadout": final_loadout,
+        "cycles": cycle_results,
+        "steps": steps,
+    }
 
 
 async def _run_corporation_explore_loop(
@@ -4644,6 +5053,7 @@ async def _recover_with_trade_order(
             else None
         )
         if isinstance(fallback_status, dict):
+            status_result = fallback_status
             final_summary = fallback_status.get("summary", final_summary)
             success = _cargo_units(final_summary, commodity) == 0
     return {
