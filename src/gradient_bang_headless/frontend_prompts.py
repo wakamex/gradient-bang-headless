@@ -119,6 +119,33 @@ def build_transfer_warp_prompt(
     )
 
 
+def build_send_message_prompt(
+    *,
+    content: str,
+    msg_type: str = "broadcast",
+    to_player: str | None = None,
+) -> str:
+    normalized_content = content.strip()
+    if not normalized_content:
+        raise ValueError("content is required")
+    if len(normalized_content) > 512:
+        raise ValueError("content must be <= 512 characters")
+
+    normalized_type = msg_type.strip().lower()
+    if normalized_type == "broadcast":
+        return f"Send a broadcast message to all players with this exact content: {normalized_content}"
+    if normalized_type != "direct":
+        raise ValueError(f"unsupported msg_type {msg_type!r}")
+
+    normalized_player = (to_player or "").strip()
+    if not normalized_player:
+        raise ValueError("to_player is required for direct messages")
+    return (
+        f"Send a direct message to {normalized_player} with this exact content: "
+        f"{normalized_content}"
+    )
+
+
 def build_ship_purchase_prompt(
     *,
     ship_display_name: str,

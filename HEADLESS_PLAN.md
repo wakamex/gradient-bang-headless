@@ -24,22 +24,33 @@ The intent is not just to scaffold code, but to keep a running record of:
 5. Keep extending post-tutorial live-player surfaces from the website:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
-   - exploration through probe-first validated frontier selection, then
-     repeated `session-probe-frontier-loop` runs from actionable local probe
-     branches
-   - trading through short exact-order or single-route batches on the current
-     best visible profit route, with `session-liquidate-cargo` used to reset
-     stranded holds cleanly and `session-load-cargo` used to restock the exact
-     intended commodity at the current port
-   - wealth through realized short-profit cycles first, with
-     wealth-padding helpers used only after they are re-verified against the
-     current live port state
-   - treat live stock as a first-class route constraint; the best visible route
-     is only as good as the commodity quantity actually available today
-   - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
-   - short-term operational constraint: long unattended trade loops can still
-     advance live state without returning a clean bounded result, so short
-     explicit batches are the current reliability ceiling
+   - exploration remains the highest long-term ROI, but current live execution
+     is rescue-gated rather than frontier-gated
+   - the active objective is to restore warp to the Kestrel/probe pair in
+     sector `3341`, then spend that fuel on the validated `4438` branch
+   - trading stays secondary while the account is fuel-starved
+   - wealth stays tertiary and should not consume the last live warp units
+
+## Latest Live Update
+
+- Added a safe `session-corp-move-to-sector` router that plans through the
+  known map and excludes known foreign garrison sectors.
+- Proved that safe router live by moving `gbheadless Auto Probe 1` from sector
+  `4356` back to sector `3341` without losing the hull.
+- Confirmed the new live bottleneck after that rescue:
+  - player ship at sector `3341` with `6/500` warp
+  - surviving probe at sector `3341` with `3/500` warp
+  - next validated frontier from that pocket is sector `4438`, distance `13`
+- Added a first-class `session-send-message` wrapper around the proven
+  prompt-mediated `send_message` surface.
+- Proved rescue communication live:
+  - broadcast contract succeeds when the session stays open long enough for the
+    tool call to complete
+  - `session-send-message` produced a real direct `chat.message` to `Filodox`
+- Updated live understanding of the blocker:
+  - exploration is still the best compounding board lever
+  - but fuel restoration and player coordination are now the highest-value
+    enabling surfaces
 
 ## Current Milestones
 

@@ -27,8 +27,9 @@ This scaffold supports:
 - a first-class `session-liquidate-cargo` helper that routes the current hold to a legal buyer and exact-sells it
 - a first-class `session-load-cargo` helper that exact-buys a chosen commodity at the current port using live price, capacity, credits, and stock
 - a first-class `session-move-to-sector` helper for segmented exact movement with status recovery
-- a first-class `session-corp-move-to-sector` helper for repeated partial corporation-ship moves toward a target sector
+- a first-class `session-corp-move-to-sector` helper for safe corporation-ship routing that avoids known foreign garrisons
 - a first-class `session-nearest-mega-port` helper for recharge-route discovery
+- a first-class `session-send-message` helper for live broadcast/direct rescue coordination with `chat.message` confirmation
 - exact frontend prompt contracts for trade orders and ship purchase requests
 - first-class logistics helpers for warp recharge, credit transfer, and bidirectional warp transfer
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
@@ -133,6 +134,11 @@ gb-headless session-auto-trade-loop \
 gb-headless session-chat-history \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-send-message \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --type broadcast \
+  --content "Distress signal from sector 3341. Need warp assistance to resume exploration."
 gb-headless session-ships \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
@@ -296,7 +302,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `session-task-events`, `session-map`, `session-chat-history`,
   `session-ships`, `session-ship-definitions`, `session-corporation`,
   `session-quest-status`, `session-assign-quest`, `session-claim-reward`,
-  `session-claim-all-rewards`, `session-cancel-task`,
+  `session-claim-all-rewards`, `session-cancel-task`, `session-send-message`,
   `session-skip-tutorial`, `session-user-text`, `session-trade-order`,
   `session-player-task`, `session-purchase-ship`, and `session-watch`
   follow the frontend's real message -> event pattern and are preferred over hand-written
@@ -323,8 +329,12 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   text. It now segments long live moves and retries status recovery when a
   mid-move `status.snapshot` request lags behind real travel progress.
 - `session-corp-move-to-sector` is the preferred corp-ship movement wrapper
-  for long rescue/logistics legs because live corp tasks often make partial
-  progress before stopping.
+  for long rescue/logistics legs because it now plans a shortest safe path
+  through the known map and refuses sectors with known foreign garrisons.
+- `session-send-message` is the preferred coordination surface when rescue,
+  refuel, or player-to-player logistics become the real blocker. The direct
+  `send_message` tool call is prompt-mediated in production, so this helper
+  wraps the proven prompt contract and waits for the resulting `chat.message`.
 - `session-recharge-warp`, `session-transfer-credits`, and
   `session-transfer-warp` are first-class wrappers around regular-player
   logistics prompts that were proven live.

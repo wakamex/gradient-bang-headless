@@ -11,45 +11,30 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `4145`
+- Personal ship sector: `3341`
 - Personal ship credits: `10,809`
 - Personal ship cargo: empty
-- Personal ship warp: `15/500`
+- Personal ship warp: `6/500`
 - Corporation fleet:
-  - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) rescued and last observed in sector `4356` with `4/500` warp after a successful frontier run
-  - `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `4393` with `300/500` warp after redeployment to a fresh adjacent frontier
-  - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
+- `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
+- `gbheadless Auto Probe 1` (`autonomous_probe`) co-located with the Kestrel in sector `3341` with `3/500` warp after a safe one-hop rescue move
+- `gbheadless Auto Probe I` (`autonomous_probe`) destroyed in sector `1469` during a blind long-haul corp move
+- destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `417` known sectors, currently observed at rank `26`
-  - wealth: on the visible board, currently observed at rank `67` with visible row value `43,409`
+  - exploration: on the visible board at `421` known sectors, currently observed at rank `28`
+  - wealth: on the visible board, currently observed at rank `68` with visible row value `41,909`
   - trading: on the visible board, currently observed at rank `27` with `290,872` total trade volume across `342` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
 - Current frontier:
   - keep all three leaderboard categories visible while climbing deeper into each board
-  - use probe-first validated frontier selection plus repeated `session-probe-frontier-loop` runs as the primary exploration engine
-  - use port-code-aware, map-backed route selection instead of naive price comparisons
-  - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
-  - treat wealth-padding helpers as provisional until they are re-proven on the current live route state
-  - use `session-load-cargo` when the next step is to buy a specific commodity at the current port; it now respects live price, credits, capacity, and stock
-  - keep trading loops short and observable; the best current combined wealth/trading shuttle is the exact `1808 <-> 256` `RO/QF` cycle, but the `QF` side can stock out and temporarily cap the route
-  - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
-  - use cheap cargo as a wealth-board lever, because the live leaderboard currently values cargo at a flat `100` credits per unit
-  - prefer fresh `1000`-credit autonomous probes over long rescue chains when the goal is exploration rank
-  - treat raw dangling map stubs as heuristics only; validate them before using them as exploration targets
-  - treat the local `3883` probe pocket as saturated unless a future validated scan says otherwise
-  - the recent successful branch chain is `2015 -> 790 -> 2896 -> 3404 -> 3560 -> 3870`, and the probe-first loop is now the preferred unit of work
-  - when more than one probe is eligible, use `session-probe-fleet-loop` as the safe parallel wrapper around those per-probe frontier workers
-  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now being used as a rotating wealth/trading shuttle around sectors `1808` and `256`
-  - keep trade loops chunked and observable; large blind route batches are productive but still too opaque to count as a clean bounded surface
-  - prioritize rescuing or redeploying corp probes over squeezing another short
-    player-ship trade cycle when exploration is still the cheapest board gain
-  - use `session-frontier-candidates` before trusting a stale
-    `no_actionable_frontier` result on a high-warp probe
-  - treat player transfer prompts as finish-waited tasks; closing the session
-    early can cancel the transfer before it lands
+  - treat rescue logistics as the highest-ROI enabling work until exploration can move again
+  - use `session-corp-move-to-sector` only through the new safe router that avoids known foreign garrison sectors
+  - use `session-send-message` for broadcast and direct rescue coordination instead of raw `session-user-text`
+  - keep the Kestrel and surviving probe together in sector `3341` until new warp arrives or a clearly better local plan appears
+  - keep exploration as the main compounding goal once fuel is restored; the next validated branch from the current pocket is the path to sector `4438`, distance `13`
+  - treat trading and wealth work as secondary while the account is fuel-starved, because spending the last `6` player warp on short local loops does not reopen the exploration engine
 
 ## Timeline
 
@@ -1034,6 +1019,60 @@ The game feels better when the friction is in choosing the next frontier rather
 than in fighting the control surface. Trading is now mostly an execution
 problem. Exploration still feels like genuine operations work because the hard
 part is figuring out where the map is actually still open.
+
+### Safe Routing, Rescue Messaging, And The New Bottleneck
+
+- The next step exposed the real operational weakness in the client.
+- I tried to use the old `session-corp-move-to-sector` behavior to bring the
+  high-warp probe back for another rescue cycle.
+- That blind corp move was a mistake:
+  - it routed `gbheadless Auto Probe I` through sector `1469`
+  - sector `1469` had a foreign garrison on the known map
+  - the probe was destroyed there
+- That changed the strategy immediately. The problem was no longer "find the
+  best frontier." It was "stop losing exploration assets to uncontrolled
+  logistics."
+- I reworked `session-corp-move-to-sector` to use a shortest-path route through
+  the known map while excluding known foreign garrison sectors.
+- I then used that safer wrapper live on the surviving low-warp probe:
+  - `gbheadless Auto Probe 1` moved cleanly from sector `4356` back to sector
+    `3341`
+  - it arrived beside the Kestrel with `3/500` warp left
+  - the move output now shows the planned path and blocked-sector summary
+- With both remaining active assets co-located in sector `3341`, I asked the
+  map what the next real exploration target was.
+  - the answer was sector `4438`
+  - the path length from `3341` is `13`
+  - that matters because the Kestrel has only `6` warp and the rescued probe
+    only `3`
+  - even draining the Kestrel into the probe would still not reopen that branch
+- That made rescue communication the highest-value regular-player surface in the
+  live game.
+- I first tested the message contract with ad hoc `session-user-text`.
+  - a short wait was not enough; the session closed before the agent completed
+    the send
+  - a longer wait proved the real contract:
+    `Send a broadcast message to all players with this exact content: ...`
+  - that produced a live `send_message` tool call and a real `chat.message`
+    broadcast
+- After that proof, I added a first-class `session-send-message` helper.
+  - it wraps the proven prompt contract
+  - it waits for the actual `chat.message`
+  - it records the underlying `send_message` tool events for diagnostics
+- I used the new helper immediately for a practical move, not a toy example:
+  - sent a direct rescue request to `Filodox`
+  - confirmed a real `chat.message` with `type = direct`
+  - confirmed the exact content and recipient in the session output
+- Current strategic conclusion:
+  - exploration is still the best long-term board lever
+  - but the active blocker is now warp restoration, not frontier selection
+  - safe logistics and player-to-player communication have become core
+    gameplay surfaces, not side utilities
+
+This stranded phase made the game feel more social than the earlier trading and
+probe loops. Once fuel scarcity becomes real, the world stops feeling like a
+solo optimization puzzle and starts feeling like a multiplayer logistics
+network where relationships and reputation matter.
 
 ## Personal Impressions
 

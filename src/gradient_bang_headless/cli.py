@@ -25,6 +25,7 @@ from .frontend_prompts import (
     build_engage_combat_prompt,
     build_garrison_update_prompt,
     build_move_to_sector_prompt,
+    build_send_message_prompt,
     build_sell_all_commodity_prompt,
     build_ship_rename_prompt,
     build_ship_purchase_prompt,
@@ -352,6 +353,16 @@ def build_parser() -> argparse.ArgumentParser:
     session_chat_history.add_argument("--max-rows", type=int)
     session_chat_history.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
+    session_send_message = sub.add_parser(
+        "session-send-message",
+        help="Connect a session, send a broadcast or direct message via the proven send_message prompt contract, and wait for chat.message",
+    )
+    _add_session_connect_args(session_send_message)
+    session_send_message.add_argument("--content", required=True)
+    session_send_message.add_argument("--type", choices=["broadcast", "direct"], default="broadcast")
+    session_send_message.add_argument("--to-player")
+    session_send_message.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
     session_ships = sub.add_parser(
         "session-ships",
         help="Connect a session, request owned ships, and wait for ships.list",
@@ -665,13 +676,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     session_corp_move_to_sector = sub.add_parser(
         "session-corp-move-to-sector",
-        help="Connect a session and keep reissuing the proven corp move prompt until the ship arrives or stops making progress",
+        help="Connect a session, plan a safe corp-ship route that avoids known foreign garrisons, and step the ship along it until arrival or stall",
     )
     _add_session_connect_args(session_corp_move_to_sector)
     session_corp_move_to_sector.add_argument("--ship-name", required=True)
     session_corp_move_to_sector.add_argument("--ship-id")
     session_corp_move_to_sector.add_argument("--sector-id", required=True, type=int)
     session_corp_move_to_sector.add_argument("--max-segments", type=int, default=12)
+    session_corp_move_to_sector.add_argument("--max-hops", type=int, default=60)
+    session_corp_move_to_sector.add_argument("--max-sectors", type=int, default=4000)
     session_corp_move_to_sector.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
     session_corp_explore_loop = sub.add_parser(
@@ -1594,6 +1607,32 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-send-message":
+        prompt = _send_message_prompt_from_args(args)
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
+            watch_result = await _watch_chat_message(
+                bridge,
+                content=args.content,
+                msg_type=args.type,
+                to_name=args.to_player,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": prompt,
+                        "result": action_result,
+                        "watch": watch_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-ships":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
@@ -2213,6 +2252,8 @@ async def dispatch(args: argparse.Namespace) -> int:
                 ship_name=args.ship_name,
                 sector_id=args.sector_id,
                 max_segments=args.max_segments,
+                max_hops=args.max_hops,
+                max_sectors=args.max_sectors,
                 timeout=args.event_timeout_seconds,
             )
             print(
@@ -2995,6 +3036,17 @@ def _move_to_sector_prompt_from_args(args: argparse.Namespace) -> str:
         raise HeadlessBridgeError("session-move-to-sector", str(exc)) from exc
 
 
+def _send_message_prompt_from_args(args: argparse.Namespace) -> str:
+    try:
+        return build_send_message_prompt(
+            content=args.content,
+            msg_type=args.type,
+            to_player=args.to_player,
+        )
+    except ValueError as exc:
+        raise HeadlessBridgeError("session-send-message", str(exc)) from exc
+
+
 def _recharge_warp_prompt_from_args(args: argparse.Namespace) -> str:
     try:
         return build_recharge_warp_prompt(units=args.units)
@@ -3527,6 +3579,68 @@ async def _watch_player_task(
         "task_finish": task_finish,
         "status": status_event,
         "post_watch_errors": post_watch_errors,
+    }
+
+
+async def _watch_chat_message(
+    bridge: HeadlessBridgeProcess,
+    *,
+    content: str,
+    msg_type: str,
+    to_name: str | None,
+    timeout: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise HeadlessBridgeError("session-send-message", "--event-timeout-seconds must be > 0")
+
+    normalized_content = content.strip()
+    normalized_type = _normalize_compare_text(msg_type)
+    normalized_to_name = _normalize_compare_text(to_name)
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    tool_events: list[dict[str, Any]] = []
+    matched_event = None
+
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            event = await bridge.next_event(timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+
+        top_level_event = event.get("event")
+        if top_level_event in {
+            "llm_function_call_started",
+            "llm_function_call_in_progress",
+            "llm_function_call_stopped",
+        }:
+            data = event.get("data")
+            if isinstance(data, dict) and data.get("function_name") == "send_message":
+                tool_events.append(event)
+
+        server_event = _extract_server_event(event)
+        if not isinstance(server_event, dict) or server_event.get("event") != "chat.message":
+            continue
+        payload = server_event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if (payload.get("content") or "").strip() != normalized_content:
+            continue
+        if _normalize_compare_text(payload.get("type")) != normalized_type:
+            continue
+        if normalized_type == "direct" and normalized_to_name:
+            if not _matches_identifier(payload.get("to_name"), normalized_to_name):
+                continue
+        matched_event = server_event
+        break
+
+    return {
+        "stop_reason": "chat.message" if matched_event is not None else "timeout",
+        "matched": matched_event is not None,
+        "chat_message": matched_event,
+        "tool_events": tool_events,
     }
 
 
@@ -4239,33 +4353,36 @@ async def _run_corporation_move_to_sector(
     ship_name: str,
     sector_id: int,
     max_segments: int,
+    max_hops: int,
+    max_sectors: int,
     timeout: float,
 ) -> dict[str, Any]:
     if sector_id <= 0:
         raise HeadlessBridgeError("session-corp-move-to-sector", "--sector-id must be > 0")
     if max_segments <= 0:
         raise HeadlessBridgeError("session-corp-move-to-sector", "--max-segments must be > 0")
+    if max_hops <= 0:
+        raise HeadlessBridgeError("session-corp-move-to-sector", "--max-hops must be > 0")
+    if max_sectors <= 0:
+        raise HeadlessBridgeError("session-corp-move-to-sector", "--max-sectors must be > 0")
 
-    prompt = build_corporation_ship_task_prompt(
-        ship_name=ship_name,
-        ship_id=ship_id,
-        task_description=build_corporation_ship_move_to_sector_task_description(sector_id=sector_id),
-    )
     initial_ship_snapshot = await _fetch_owned_ship_snapshot(
         bridge,
         ship_id=ship_id,
         ship_name=ship_name,
         timeout=min(timeout, 30.0),
     )
+    corporation_snapshot = await bridge.get_my_corporation(timeout=min(timeout, 30.0))
+    corporation_context = _extract_corporation_context(corporation_snapshot)
     current_ship = initial_ship_snapshot["ship"]
     segments: list[dict[str, Any]] = []
 
     if current_ship.get("sector") == sector_id:
         return {
-            "prompt": prompt,
             "target_sector": sector_id,
             "stop_reason": "already_there",
             "initial_ship": initial_ship_snapshot,
+            "corporation_context": corporation_context,
             "segments": segments,
             "final_ship": current_ship,
         }
@@ -4273,6 +4390,44 @@ async def _run_corporation_move_to_sector(
     stop_reason = "max_segments_reached"
     for _ in range(max_segments):
         start_ship = current_ship
+        start_sector = _coerce_int(start_ship.get("sector"))
+        if start_sector <= 0:
+            stop_reason = "unknown_start_sector"
+            break
+
+        map_result = await bridge.get_my_map(
+            center_sector=start_sector,
+            fit_sectors=[start_sector, sector_id],
+            max_hops=max_hops,
+            max_sectors=max_sectors,
+            timeout=min(timeout, 60.0),
+        )
+        route_plan = _plan_safe_corporation_route(
+            origin_sector=start_sector,
+            target_sector=sector_id,
+            map_result=map_result,
+            own_player_id=corporation_context.get("player_id"),
+            own_corp_id=corporation_context.get("corp_id"),
+        )
+        planned_path = route_plan.get("path") if isinstance(route_plan, dict) else None
+        if not isinstance(planned_path, list) or len(planned_path) < 2:
+            stop_reason = route_plan.get("stop_reason") if isinstance(route_plan, dict) else "no_safe_path"
+            segments.append(
+                {
+                    "start_sector": start_sector,
+                    "end_sector": start_sector,
+                    "progress_observed": False,
+                    "route_plan": route_plan,
+                }
+            )
+            break
+
+        next_sector = _coerce_int(planned_path[1])
+        prompt = build_corporation_ship_task_prompt(
+            ship_name=ship_name,
+            ship_id=ship_id,
+            task_description=build_corporation_ship_move_to_sector_task_description(sector_id=next_sector),
+        )
         action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
         watch_result = await _watch_corporation_task(
             bridge,
@@ -4317,10 +4472,12 @@ async def _run_corporation_move_to_sector(
             "watch": watch_result,
             "ship": post_ship_snapshot,
             "ship_polls": ship_polls,
-            "start_sector": start_ship.get("sector"),
+            "start_sector": start_sector,
             "end_sector": post_ship.get("sector"),
             "start_warp": start_ship.get("warp_power"),
             "end_warp": post_ship.get("warp_power"),
+            "segment_target_sector": next_sector,
+            "route_plan": route_plan,
             "progress_observed": progress_observed,
             "task_completion_inferred": bool(progress_observed and not watch_result.get("task_finished")),
         }
@@ -4338,10 +4495,10 @@ async def _run_corporation_move_to_sector(
             break
 
     return {
-        "prompt": prompt,
         "target_sector": sector_id,
         "stop_reason": stop_reason,
         "initial_ship": initial_ship_snapshot,
+        "corporation_context": corporation_context,
         "segments": segments,
         "final_ship": current_ship,
     }
@@ -4523,6 +4680,161 @@ def _shortest_path(graph: dict[int, set[int]], *, start: int, target: int) -> li
         current = prev[current]
     path.reverse()
     return path
+
+
+def _shortest_path_avoiding(
+    graph: dict[int, set[int]],
+    *,
+    start: int,
+    target: int,
+    blocked: set[int],
+) -> list[int]:
+    if start <= 0 or target <= 0 or start not in graph or target not in graph:
+        return []
+    if target in blocked:
+        return []
+    prev: dict[int, int | None] = {start: None}
+    queue: deque[int] = deque([start])
+    while queue:
+        sector = queue.popleft()
+        if sector == target:
+            break
+        for neighbor in graph.get(sector, set()):
+            if neighbor in prev:
+                continue
+            if neighbor in blocked and neighbor != target:
+                continue
+            prev[neighbor] = sector
+            queue.append(neighbor)
+    if target not in prev:
+        return []
+    path: list[int] = []
+    current: int | None = target
+    while current is not None:
+        path.append(current)
+        current = prev[current]
+    path.reverse()
+    return path
+
+
+def _extract_corporation_context(result: dict[str, Any]) -> dict[str, Any]:
+    payload = _extract_bridge_payload(result)
+    corporation = payload.get("corporation") if isinstance(payload, dict) else None
+    player = payload.get("player") if isinstance(payload, dict) else None
+    corp_id = corporation.get("corp_id") if isinstance(corporation, dict) else None
+    player_id = player.get("id") if isinstance(player, dict) else None
+    return {
+        "corp_id": corp_id if isinstance(corp_id, str) and corp_id else None,
+        "player_id": player_id if isinstance(player_id, str) and player_id else None,
+    }
+
+
+def _is_foreign_garrison_sector(
+    sector: dict[str, Any],
+    *,
+    own_player_id: str | None,
+    own_corp_id: str | None,
+) -> bool:
+    garrison = sector.get("garrison")
+    if not isinstance(garrison, dict) or not garrison:
+        return False
+    garrison_player_id = garrison.get("player_id")
+    garrison_corp_id = garrison.get("corporation_id")
+    if isinstance(own_player_id, str) and own_player_id and garrison_player_id == own_player_id:
+        return False
+    if isinstance(own_corp_id, str) and own_corp_id and garrison_corp_id == own_corp_id:
+        return False
+    return any(
+        isinstance(value, str) and value
+        for value in (garrison_player_id, garrison_corp_id)
+    ) or bool(garrison)
+
+
+def _plan_safe_corporation_route(
+    *,
+    origin_sector: int,
+    target_sector: int,
+    map_result: dict[str, Any],
+    own_player_id: str | None,
+    own_corp_id: str | None,
+) -> dict[str, Any]:
+    map_payload = _extract_bridge_payload(map_result)
+    sectors = map_payload.get("sectors") if isinstance(map_payload, dict) else None
+    sectors_by_id: dict[int, dict[str, Any]] = {}
+    if isinstance(sectors, list):
+        for sector in sectors:
+            if not isinstance(sector, dict):
+                continue
+            sector_id = _coerce_int(sector.get("id"))
+            if sector_id > 0:
+                sectors_by_id[sector_id] = sector
+
+    graph = _map_graph_from_payload(map_payload)
+    if origin_sector <= 0 or target_sector <= 0:
+        return {
+            "origin_sector": origin_sector or None,
+            "target_sector": target_sector or None,
+            "map_sector_count": len(sectors_by_id),
+            "blocked_sectors": [],
+            "stop_reason": "invalid_route_endpoints",
+            "path": [],
+        }
+    if origin_sector not in graph:
+        return {
+            "origin_sector": origin_sector,
+            "target_sector": target_sector,
+            "map_sector_count": len(sectors_by_id),
+            "blocked_sectors": [],
+            "stop_reason": "origin_not_in_map",
+            "path": [],
+        }
+    if target_sector not in graph:
+        return {
+            "origin_sector": origin_sector,
+            "target_sector": target_sector,
+            "map_sector_count": len(sectors_by_id),
+            "blocked_sectors": [],
+            "stop_reason": "target_not_in_map",
+            "path": [],
+        }
+
+    blocked_sectors = sorted(
+        sector_id
+        for sector_id, sector in sectors_by_id.items()
+        if sector_id != origin_sector
+        and _is_foreign_garrison_sector(
+            sector,
+            own_player_id=own_player_id,
+            own_corp_id=own_corp_id,
+        )
+    )
+    blocked_sector_set = set(blocked_sectors)
+    if target_sector in blocked_sector_set:
+        return {
+            "origin_sector": origin_sector,
+            "target_sector": target_sector,
+            "map_sector_count": len(sectors_by_id),
+            "blocked_sectors": blocked_sectors,
+            "stop_reason": "target_blocked_by_foreign_garrison",
+            "path": [],
+        }
+
+    safe_path = _shortest_path_avoiding(
+        graph,
+        start=origin_sector,
+        target=target_sector,
+        blocked=blocked_sector_set,
+    )
+    return {
+        "origin_sector": origin_sector,
+        "target_sector": target_sector,
+        "map_sector_count": len(sectors_by_id),
+        "blocked_sectors": blocked_sectors,
+        "blocked_sector_count": len(blocked_sectors),
+        "stop_reason": "ok" if safe_path else "no_safe_path",
+        "path": safe_path,
+        "distance": len(safe_path) - 1 if safe_path else None,
+    }
 
 
 def _rank_nearest_mega_ports(
@@ -5953,6 +6265,8 @@ async def _run_corporation_explore_loop(
             ship_name=ship_name,
             sector_id=start_sector,
             max_segments=12,
+            max_hops=60,
+            max_sectors=4000,
             timeout=timeout,
         )
         current_ship = frontier_reset["final_ship"]
