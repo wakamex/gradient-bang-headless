@@ -24,47 +24,53 @@ The intent is not just to scaffold code, but to keep a running record of:
 5. Keep extending post-tutorial live-player surfaces from the website:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
-   - exploration remains the highest long-term ROI, but current live execution
-     is rescue-gated rather than frontier-gated
-   - the active objective is to restore warp to the `4145/3341` rescue pocket,
-     then spend that fuel on the validated `4438` branch
-   - trading stays secondary while the account is fuel-starved, but the local
-     `3328 <-> 4145` route is now a proven fallback
-   - wealth stays tertiary and should not consume the last live warp units
+   - exploration remains the highest long-term ROI and is no longer
+     rescue-gated
+   - the active objective is to fan probes onto validated frontier branches
+     from their own local pockets
+   - cheap corp probe purchases now beat short trade loops as the best capital
+     use while the Kestrel is parked at mega-port `1413`
+   - trading stays secondary unless it clearly funds more exploration capacity
+   - wealth stays tertiary and should rise mostly as a side effect of fleet
+     growth
 
 ## Latest Live Update
 
-- `session-trade-opportunities` exposed a real live fallback inside the rescue
-  pocket:
-  - `3328 -> 4145` on `Neuro Symbolics`
-  - `4145 -> 3328` on `Quantum Foam`
-- A bounded live `session-shuttle-loop` then exposed a real control bug:
-  - the loop could honor `--min-warp` before unloading at the sell port
-  - that stranded the Kestrel at sector `4145` with cargo still loaded
-- Fixed that bug so `session-shuttle-loop` now allows in-place unloads even
-  when warp has already fallen below `--min-warp`.
-- Recovered the live state with `session-liquidate-cargo`:
-  - sold `30` `Neuro Symbolics` at sector `4145` for `1,560` credits
-  - stabilized the Kestrel at sector `4145`, `0/500` warp, `11,469` credits
-- Added `session-chat-watch` for rescue coordination:
-  - it can satisfy from recent `chat.history`
-  - or run as a future-only wait on live `chat.message` events
-- Proved live rescue progress:
-  - `NillaWafer` confirmed they are en route to sector `4145`
-  - the latest direct message gave an ETA of roughly `35` jumps
+- Rescue completed in production:
+  - `NillaWafer` transferred warp into the Kestrel and the stranded probe
+  - the Kestrel returned to mega-port sector `1413`
+- Hardened `session-purchase-corp-ship` around real live drift:
+  - auto-confirms proceed prompts
+  - restates the real ship-credit funding rule when the bot invents a corp-bank
+    requirement
+- Proved repeated single-probe purchases live:
+  - bought `gbheadless Auto Probe 2`
+  - bought `gbheadless Auto Probe 3`
+- Finished the missing fresh-probe frontier fix:
+  - probes were already being staged from visited anchors
+  - now the selected frontier target and preferred branch path are also passed
+    through the corp explore task prompt
+- Reinstalled the matching Playwright browser revision needed by the local
+  Daily bridge so live validation was possible again.
+- Validated the new branch-targeted probe path on production:
+  - `gbheadless Auto Probe 2` started from staged frontier sector `2548`
+  - it pushed toward preferred target sector `3494`
+  - it finished in sector `3916`
+  - the run added `+13` known sectors and `+13` corporation sectors
 - Current live state:
-  - Kestrel at sector `4145`, `0/500` warp, empty cargo
-  - surviving probe at sector `3341`, `3/500` warp
-  - exploration `421`, rank `28`
-  - trading `291,772`, rank `27`
-  - wealth `42,569`, rank `64`
-- Rescue coordination is still active:
-  - `Filodox` publicly replied that they could not help refuel
-  - sent an updated direct rescue request to `NillaWafer`
+  - Kestrel at sector `1413`, `89/500` warp, empty cargo, `9,469` credits
+  - `Auto Probe 1` at sector `4572`, `176/500` warp
+  - `Auto Probe 2` at sector `3916`, `473/500` warp
+  - `Auto Probe 3` at sector `1333`, `497/500` warp
+  - exploration `444`, visible rank `29`
+  - trading `293,332`, visible rank `27`
+  - wealth `42,569`, visible rank `70`
 - Updated blocker summary:
-  - rescue/fuel is still the primary gate on exploration
-  - the `3328 <-> 4145` pocket is now a proven secondary fallback for trading
-    and wealth when local warp becomes available
+  - rescue is no longer the main gate
+  - the remaining gap is scalable frontier selection across multiple live probe
+    pockets
+  - `session-probe-fleet-loop` should now be used only when at least two probes
+    have distinct actionable branches
 
 ## Current Milestones
 
@@ -79,7 +85,7 @@ current push. Status is updated against production, not against local mocks.
 2. `[x]` Grow the corporation past the tutorial floor with at least one more
    ship and a more useful fleet mix than "Kestrel plus two probes".
    Current result: the corporation now has one `autonomous_light_hauler` and
-   one active `autonomous_probe`.
+   three live `autonomous_probe` ships.
 3. `[x]` Reach one successful non-tutorial asset-acquisition loop end to end:
    unowned ship collection or salvage collection.
    Current result: salvage collection is proven live; unowned-ship collection
@@ -273,22 +279,24 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `4145`
-- personal ship credits: `10809`
-- personal ship warp power: `15`
+- personal ship sector: `1413`
+- personal ship credits: `9469`
+- personal ship warp power: `89`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) rescued and last observed in sector `4356` with `4/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `4393` with `300/500` warp after redeployment to a fresh adjacent frontier
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) active in sector `4572` with `176/500` warp
+- corp ship: `gbheadless Auto Probe 2` (`autonomous_probe`) active in sector `3916` with `473/500` warp
+- corp ship: `gbheadless Auto Probe 3` (`autonomous_probe`) active in sector `1333` with `497/500` warp
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
+- destroyed corp ship: `gbheadless Auto Probe I`
 - cargo: empty
 - fighters: `300`
-- known sectors: `417`
-- corporation sectors visited: `411`
+- known sectors: `444`
+- corporation sectors visited: `438`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `417` known sectors, currently observed at rank `26`
-- visible trading board entry: `290872` total volume, currently observed at rank `27`
-- visible wealth board entry: currently observed at rank `67` with visible row value `43409`
+- visible exploration board entry: `444` known sectors, currently observed at rank `29`
+- visible trading board entry: `293332` total volume, currently observed at rank `27`
+- visible wealth board entry: currently observed at rank `70` with visible row value `42569`
 
 Latest live progression proved:
 
@@ -311,6 +319,20 @@ Latest live progression proved:
 - proved `session-probe-fleet-loop` against two eligible probes in parallel
 - converted that rescue into a real `+8` exploration gain and then redeployed
   the high-warp probe onto a new frontier at sector `4393`
+- confirmed the rescue fully landed and converted it into exploration capital:
+  - Kestrel returned to mega-port sector `1413`
+  - warp was available again on the Kestrel and the rescued probe
+- hardened `session-purchase-corp-ship` against live confirmation drift and
+  corp-bank hallucinations, then used it to buy:
+  - `gbheadless Auto Probe 2`
+  - `gbheadless Auto Probe 3`
+- finished the fresh-probe frontier fix by passing explicit branch targets and
+  preferred paths into the corp explore task prompt
+- re-proved `session-probe-frontier-loop` on a fresh staged probe:
+  - `gbheadless Auto Probe 2` started from sector `2548`
+  - targeted frontier branch sector `3494`
+  - finished in sector `3916`
+  - added `+13` known sectors and `+13` corporation sectors
 - completed a full live garrison cycle: deploy, update, collect
 - purchased a first non-probe corporation ship, `gbheadless Auto Hauler 1`
 - proved the loop runner can stop on a real corp-fleet target

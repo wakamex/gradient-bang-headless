@@ -11,30 +11,32 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `3341`
-- Personal ship credits: `10,809`
+- Personal ship sector: `1413`
+- Personal ship credits: `9,469`
 - Personal ship cargo: empty
-- Personal ship warp: `6/500`
+- Personal ship warp: `89/500`
 - Corporation fleet:
 - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
-- `gbheadless Auto Probe 1` (`autonomous_probe`) co-located with the Kestrel in sector `3341` with `3/500` warp after a safe one-hop rescue move
+- `gbheadless Auto Probe 1` (`autonomous_probe`) active in sector `4572` with `176/500` warp
+- `gbheadless Auto Probe 2` (`autonomous_probe`) active in sector `3916` with `473/500` warp
+- `gbheadless Auto Probe 3` (`autonomous_probe`) active in sector `1333` with `497/500` warp
 - `gbheadless Auto Probe I` (`autonomous_probe`) destroyed in sector `1469` during a blind long-haul corp move
 - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `421` known sectors, currently observed at rank `28`
-  - wealth: on the visible board, currently observed at rank `68` with visible row value `41,909`
-  - trading: on the visible board, currently observed at rank `27` with `290,872` total trade volume across `342` trades
+  - exploration: on the visible board at `444` known sectors, currently observed at rank `29`
+  - wealth: on the visible board, currently observed at rank `70` with visible row value `42,569`
+  - trading: on the visible board, currently observed at rank `27` with `293,332` total trade volume across `344` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
 - Current frontier:
   - keep all three leaderboard categories visible while climbing deeper into each board
-  - treat rescue logistics as the highest-ROI enabling work until exploration can move again
-  - use `session-corp-move-to-sector` only through the new safe router that avoids known foreign garrison sectors
-  - use `session-send-message` for broadcast and direct rescue coordination instead of raw `session-user-text`
-  - keep the Kestrel and surviving probe together in sector `3341` until new warp arrives or a clearly better local plan appears
-  - keep exploration as the main compounding goal once fuel is restored; the next validated branch from the current pocket is the path to sector `4438`, distance `13`
-  - treat trading and wealth work as secondary while the account is fuel-starved, because spending the last `6` player warp on short local loops does not reopen the exploration engine
+  - use exploration as the main compounding engine again now that rescue is complete
+  - use `session-purchase-corp-ship` to turn spare Kestrel credits into more probe workers before resuming routine trading
+  - use `session-corp-move-to-sector` only through the safe router that avoids known foreign garrison sectors
+  - use `session-probe-frontier-loop` with explicit branch targets from `session-frontier-candidates` instead of generic fresh-probe explore prompts
+  - keep trading secondary unless it clearly funds another probe or a recharge/support action
+  - let wealth rise mostly from fleet growth and successful exploration support, not cargo padding
 
 ## Timeline
 
@@ -1150,6 +1152,88 @@ This is one of the more compelling parts of the game so far. Once another
 player is actively coming to help, the world feels less like a static score
 ladder and more like a live logistics space where timing, trust, and clear
 communication matter.
+
+### Rescue Landed, The Mega-Port Reset Worked, And Probe Capital Became The ROI Play
+
+- The rescue eventually did land in practice, and it changed the whole shape
+  of the run.
+  - `NillaWafer` transferred warp into the Kestrel and also refueled the probe
+    parked in sector `3341`
+  - I confirmed the rescue in direct chat and resumed movement from there
+- Once the Kestrel was mobile again, the optimal move was not another small
+  trade grind. It was to turn that rescued position into more exploration
+  workers.
+- I traced the real corporation-ship purchase rules against the checked-in
+  backend tests and function code.
+  - corporation ship purchases use the current personal ship's on-hand credits
+  - they do not draw from corporation bank funds
+- The live bot still drifted on that surface, though.
+  - it sometimes asked for an extra "would you like me to proceed" confirmation
+  - it sometimes talked as if corporation treasury was the limiting factor
+- I hardened `session-purchase-corp-ship` around the real production behavior.
+  - it now catches the proceed-confirmation drift
+  - it can also restate the ship-credit funding rule when the bot gets that
+    wrong
+- That repair path was immediately useful, not theoretical.
+  - I bought `gbheadless Auto Probe 2`
+  - then bought `gbheadless Auto Probe 3`
+  - both were purchased through the live headless path at mega-port sector
+    `1413`
+- That shifted the account from "one useful probe and a lot of waiting" to a
+  real exploration fleet:
+  - Kestrel back at mega-port `1413`
+  - three live corporation probes
+  - one stranded hauler
+
+This was the point where the game started to feel less like rescue triage and
+more like capital allocation. Once another player's help turned into working
+warp and live cash position again, the interesting question stopped being "how
+do I survive this pocket?" and became "what is the cheapest asset that keeps
+compounding my board position?" The answer was clearly "more probes."
+
+### Fresh-Probe Frontier Staging Broke, Then The Explicit Branch Prompt Fixed It
+
+- The first multi-probe exploration attempt exposed a more subtle problem than
+  rescue.
+  - `session-probe-fleet-loop` could classify the new probes correctly
+  - but the fresh probes still stalled in local pockets or reported no
+    actionable frontier
+- The root issue was not just pathfinding. It was prompt specificity.
+  - I had already taught the client to stage fresh probes from a visited anchor
+    instead of centering the map on an unvisited sector
+  - but the corp explore task itself was still too generic after the stage
+  - it told the bot to move to a visited frontier sector and explore, without
+    naming the actual branch it should push through
+- I finished that missing part.
+  - the client now derives a preferred frontier target sector from the chosen
+    candidate
+  - it also carries the chosen branch path into the exploration task prompt
+  - the corp task is now told the actual branch it should probe, not just a
+    vague frontier idea
+- I also had to restore the local Daily runtime to validate it properly.
+  - the matching Playwright Chromium headless-shell revision for the bridge was
+    missing on this machine
+  - I reinstalled the pinned browser revision used by the bridge so Daily runs
+    were testable again
+- That validation immediately paid off on production.
+  - `session-probe-frontier-loop` for `gbheadless Auto Probe 2` selected a
+    staged frontier from sector `2548`
+  - it passed preferred target sector `3494` into the corp task prompt
+  - the probe advanced and finished in sector `3916`
+  - the run added `+13` known sectors and `+13` corporation sectors
+- After that run, the live state became:
+  - exploration `444` known sectors, visible rank `29`
+  - trading `293,332`, visible rank `27`
+  - wealth `42,569`, visible rank `70`
+  - Kestrel at sector `1413`, `9,469` credits, `89/500` warp
+  - `Auto Probe 1` at `4572`, `176/500` warp
+  - `Auto Probe 2` at `3916`, `473/500` warp
+  - `Auto Probe 3` at `1333`, `497/500` warp
+
+This is the cleaner version of the game I wanted the whole time. The probe was
+not just wandering "somewhere frontier-ish" anymore; it was being given a
+concrete branch and then proving that the branch mattered. That made the
+automation feel less like persuasion and more like command and control.
 
 ## Personal Impressions
 

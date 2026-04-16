@@ -32,11 +32,12 @@ This scaffold supports:
 - a first-class `session-send-message` helper for live broadcast/direct rescue coordination with `chat.message` confirmation
 - a first-class `session-chat-watch` helper for rescue inbox monitoring from recent history or future live `chat.message` events
 - exact frontend prompt contracts for trade orders and ship purchase requests
+- a hardened `session-purchase-corp-ship` flow that auto-confirms proceed prompts and corrects bot drift around corporation-vs-ship funding
 - first-class logistics helpers for warp recharge, credit transfer, and bidirectional warp transfer
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
 - a first-class `session-frontier-candidates` helper for ranking actionable
   frontier branches around the current ship or a chosen center sector
-- a first-class `session-probe-frontier-loop` for probe-first frontier selection, validation, and one bounded exploration branch
+- a first-class `session-probe-frontier-loop` for probe-first frontier selection, validation, visited-anchor staging, and one bounded exploration branch
 - a first-class `session-probe-fleet-loop` that selects eligible corporation probes and fans out one probe-frontier subprocess worker per ship
 - a deterministic `session-trade-route-loop` for repeatable personal trading
 - a reusable `loop` runner for long bot-driven objectives with state polling and reprompts
@@ -399,6 +400,14 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-trade-order`, `session-purchase-ship`, and
   `session-purchase-corp-ship` send the exact strings the upstream React
   client builds in `TradePanel.tsx` and `ShipDetails.tsx`.
+- in live play, corporation ship purchases still sometimes drift into an extra
+  proceed-confirmation turn or incorrectly talk about corporation treasury.
+  `session-purchase-corp-ship` now repairs both cases by restating the real
+  frontend purchase intent and the actual ship-credit funding rule.
+- `session-probe-frontier-loop` no longer stops at generic "go explore from a
+  frontier" instructions. It now carries the selected frontier target and
+  branch path into the corp task prompt so fresh staged probes keep pushing the
+  intended branch.
 - player transfer helpers are task-driven, not instant RPCs. In current live
   play, `session-transfer-warp` is reliable when run with `--wait-for-finish`;
   otherwise the session can close early enough for the bot to cancel the task.
