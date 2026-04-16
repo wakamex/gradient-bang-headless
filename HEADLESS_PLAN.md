@@ -224,6 +224,9 @@ Current blocker:
     port code is checked; the client now blocks that class of mistake, but the
     remaining work is keeping every trading helper aligned with legal `B`/`S`
     directionality
+  - player transfer helpers can self-cancel if the session closes right after
+    `task.start`; until that default is hardened, transfer operations should be
+    run with `--wait-for-finish`
   - local map stubs can be false frontier because already-known off-window
     sectors still appear as dangling neighbors; `session-frontier-candidates`
     now validates those stubs, and the `3883` probe pocket looks locally
@@ -245,22 +248,22 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `256`
+- personal ship sector: `4145`
 - personal ship credits: `10809`
-- personal ship warp power: `164`
+- personal ship warp power: `15`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `3870` with `301/500` warp after the first fleet-loop worker run
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) rescued and last observed in sector `4356` with `4/500` warp
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `4393` with `300/500` warp after redeployment to a fresh adjacent frontier
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- known sectors: `408`
-- corporation sectors visited: `402`
+- known sectors: `417`
+- corporation sectors visited: `411`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `408` known sectors, currently observed at rank `28`
+- visible exploration board entry: `417` known sectors, currently observed at rank `26`
 - visible trading board entry: `290872` total volume, currently observed at rank `27`
-- visible wealth board entry: currently observed at rank `66` with visible row value `44409`
+- visible wealth board entry: currently observed at rank `67` with visible row value `43409`
 
 Latest live progression proved:
 
@@ -278,6 +281,11 @@ Latest live progression proved:
 - claimed the final corporation tutorial reward
 - collected live salvage through a first-class headless command
 - engaged live combat and submitted a real `combat-action`
+- rescued the stranded corp probe at sector `3341` with a successful
+  `session-transfer-warp --wait-for-finish`
+- proved `session-probe-fleet-loop` against two eligible probes in parallel
+- converted that rescue into a real `+8` exploration gain and then redeployed
+  the high-warp probe onto a new frontier at sector `4393`
 - completed a full live garrison cycle: deploy, update, collect
 - purchased a first non-probe corporation ship, `gbheadless Auto Hauler 1`
 - proved the loop runner can stop on a real corp-fleet target

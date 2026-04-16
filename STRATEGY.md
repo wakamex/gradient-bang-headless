@@ -64,30 +64,37 @@ Why:
 
 ## Current Live Conclusions
 
-- `session-probe-frontier-loop` is now the highest-confidence compounding
-  surface.
-- The probe-local branch chain `2015 -> 790 -> 2896 -> 3404 -> 3560 -> 3870`
-  is real and has now delivered five consecutive successful exploration pushes.
+- `session-probe-frontier-loop` and `session-probe-fleet-loop` are now the
+  highest-confidence compounding surfaces.
+- The best recent gain came from rescuing a stranded probe, not from another
+  trade loop:
+  - moved the Kestrel to sector `3341`
+  - transferred `20` warp into `gbheadless Auto Probe 1`
+  - immediately converted that rescue into a live `+8` exploration gain
 - Latest strong exploration state:
-  - exploration `408`, visible rank `28`
-  - next visible row is only `3` sectors above
-  - probe ended the last successful run at sector `3870`
-- Latest strong trading state:
+  - exploration `417`, visible rank `26`
+  - rescued probe ended its useful branch at sector `4356` with `4` warp
+  - high-warp probe redeployed to sector `4393` with `300` warp
+- Latest trading state:
   - trading `290872`, visible rank `27`
-  - player ship is clean and liquid at sector `256`
-- Latest wealth state is weaker after liquidation:
-  - wealth `44409`, visible rank `66`
-  - do not assume `session-wealth-loadout` is reliable until it is re-proven
+  - no change this pass, which is acceptable because exploration produced the
+    higher-return gain
+- Latest wealth state:
+  - wealth `43409`, visible rank `67`
+  - do not spend player-ship time on wealth padding until exploration stalls
 
 ## What To Do Next
 
-1. Keep running probe-led exploration while the next visible exploration row
-   remains cheaper than the next trading or wealth row.
-   Use `session-probe-fleet-loop` whenever there is more than one eligible
-   probe; otherwise keep using `session-probe-frontier-loop`.
-2. Force-refresh leaderboard state after meaningful exploration jumps.
-3. Only spend player-ship time on short exact trade batches if:
-   - exploration stalls temporarily, or
-   - a clearly superior legal route is available from the current position.
-4. Re-verify or replace the current wealth-padding helper before using wealth
-   as a target again.
+1. Keep the two-probe exploration posture alive.
+   - use `session-probe-fleet-loop` when both probes have usable warp
+   - rescue or recharge corp probes before buying more player-side volume
+2. Use `session-frontier-candidates` before spending the high-warp probe.
+   - do not trust `no_actionable_frontier` blindly if the direct candidate scan
+     still shows adjacent unvisited targets
+3. Treat player transfer/recharge prompts as finish-waited tasks.
+   - if the session closes early, the bot can cancel the transfer task
+   - for now, run transfer helpers with `--wait-for-finish`
+4. Only return to trading when:
+   - both active probes are dry or locally exhausted, or
+   - a short exact route offers a clearly cheaper next board gain than
+     exploration

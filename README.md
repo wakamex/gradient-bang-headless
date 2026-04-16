@@ -32,6 +32,8 @@ This scaffold supports:
 - exact frontend prompt contracts for trade orders and ship purchase requests
 - first-class logistics helpers for warp recharge, credit transfer, and bidirectional warp transfer
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
+- a first-class `session-frontier-candidates` helper for ranking actionable
+  frontier branches around the current ship or a chosen center sector
 - a first-class `session-probe-frontier-loop` for probe-first frontier selection, validation, and one bounded exploration branch
 - a first-class `session-probe-fleet-loop` that selects eligible corporation probes and fans out one probe-frontier subprocess worker per ship
 - a deterministic `session-trade-route-loop` for repeatable personal trading
@@ -181,6 +183,12 @@ gb-headless session-corp-explore-loop \
   --ship-id eab4cd \
   --new-sectors-per-run 20 \
   --max-runs 3
+gb-headless session-frontier-candidates \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --ship-name "gbheadless Auto Probe I" \
+  --limit 12 \
+  --validate-limit 12
 gb-headless session-probe-frontier-loop \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -371,6 +379,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-trade-order`, `session-purchase-ship`, and
   `session-purchase-corp-ship` send the exact strings the upstream React
   client builds in `TradePanel.tsx` and `ShipDetails.tsx`.
+- player transfer helpers are task-driven, not instant RPCs. In current live
+  play, `session-transfer-warp` is reliable when run with `--wait-for-finish`;
+  otherwise the session can close early enough for the bot to cancel the task.
 - `session-collect-unowned-ship` sends the exact string the upstream React
   client builds in `SectorUnownedSubPanel.tsx`, and now auto-fills the current
   sector when `--sector-id` is omitted. The live game path still appears to be

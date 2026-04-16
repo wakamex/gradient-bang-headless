@@ -11,19 +11,19 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `256`
+- Personal ship sector: `4145`
 - Personal ship credits: `10,809`
 - Personal ship cargo: empty
-- Personal ship warp: `164/500`
+- Personal ship warp: `15/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-  - `gbheadless Auto Probe I` (`autonomous_probe`) in sector `3870` with `301/500` warp after the first fleet-loop worker run
+  - `gbheadless Auto Probe 1` (`autonomous_probe`) rescued and last observed in sector `4356` with `4/500` warp after a successful frontier run
+  - `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `4393` with `300/500` warp after redeployment to a fresh adjacent frontier
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `408` known sectors, currently observed at rank `28`
-  - wealth: on the visible board, currently observed at rank `67` with visible row value `44,409`
-  - trading: on the visible board, currently observed at rank `27` with `290,872` total trade volume across `322` trades
+  - exploration: on the visible board at `417` known sectors, currently observed at rank `26`
+  - wealth: on the visible board, currently observed at rank `67` with visible row value `43,409`
+  - trading: on the visible board, currently observed at rank `27` with `290,872` total trade volume across `342` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
@@ -44,6 +44,12 @@ in the live Gradient Bang production game.
   - when more than one probe is eligible, use `session-probe-fleet-loop` as the safe parallel wrapper around those per-probe frontier workers
   - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now being used as a rotating wealth/trading shuttle around sectors `1808` and `256`
   - keep trade loops chunked and observable; large blind route batches are productive but still too opaque to count as a clean bounded surface
+  - prioritize rescuing or redeploying corp probes over squeezing another short
+    player-ship trade cycle when exploration is still the cheapest board gain
+  - use `session-frontier-candidates` before trusting a stale
+    `no_actionable_frontier` result on a high-warp probe
+  - treat player transfer prompts as finish-waited tasks; closing the session
+    early can cancel the transfer before it lands
 
 ## Timeline
 
@@ -975,6 +981,54 @@ in the live Gradient Bang production game.
   The strategic takeaway still stands: the next exploration loops should be
   driven by validated frontier branches like `4790 -> 4407`, not by repeating
   the `3883` pocket.
+
+### Rescue And Redeploy Beat Another Trade Loop
+
+- The next high-ROI move was not more trading. It was turning a dead asset back
+  into an explorer.
+- I moved the Kestrel from sector `256` through sector `1413`, then on to the
+  stranded probe at sector `3341`.
+- That route mattered because it proved the rescue path was practical from live
+  player tools alone:
+  - the Kestrel arrived in-sector with `41` warp
+  - `gbheadless Auto Probe 1` was visibly present and still at `0/500`
+  - the sector had no port, so this was a real field rescue, not a megaport
+    convenience case
+- The first live transfer attempt exposed a client/runtime problem:
+  - `session-transfer-warp` without `--wait-for-finish` started the right task
+  - but the session then closed and the bot cancelled the transfer almost
+    immediately
+- Re-running the exact same transfer with `--wait-for-finish` succeeded:
+  - moved `20` warp into `gbheadless Auto Probe 1`
+  - left the Kestrel at `21` warp
+  - confirmed the probe at `20` warp in-sector
+- That rescue immediately justified itself.
+  - `session-probe-fleet-loop` selected both eligible probes in parallel
+  - `gbheadless Auto Probe I` reported `no_actionable_frontier` from its
+    current pocket
+  - the rescued `gbheadless Auto Probe 1` made real frontier progress instead
+  - it added `+8` known sectors and ended at sector `4356` with `4` warp
+- After a forced refresh, the board moved with it:
+  - exploration rose from `408` to `416`
+  - visible exploration rank improved from `28` to `29`, then after the next
+    probe redeploy climbed again to `417` at rank `26`
+- I then asked the map directly what the high-warp probe should do next instead
+  of trusting the earlier fleet-loop result.
+  - `session-frontier-candidates` around `gbheadless Auto Probe I` showed that
+    sector `3870` still had immediate unvisited targets, especially `4393` and
+    `4412`
+  - so the probe was not globally exhausted; it was just mismatched with the
+    earlier local search result
+- I sent `gbheadless Auto Probe I` back out.
+  - it redeployed from sector `3870` to sector `4393`
+  - the corp summary later showed it there with `300/500` warp
+- The strategic lesson from this whole pass is sharper than before:
+  - rescuing stranded probes has better long-term ROI than another short trade
+    loop whenever it restores parallel exploration
+  - direct frontier scoring is better than folklore about where the probe
+    “ought” to go next
+  - the headless client now has enough surface area to do real fleet
+    operations, not just single-ship trading
 
 The game feels better when the friction is in choosing the next frontier rather
 than in fighting the control surface. Trading is now mostly an execution
