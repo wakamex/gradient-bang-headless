@@ -3394,6 +3394,8 @@ async def _run_trade_route_loop(
     cycle_results: list[dict[str, Any]] = []
     recovery_steps: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
+    current_cycle_start: dict[str, Any] | None = None
+    current_cycle_steps: list[dict[str, Any]] | None = None
 
     while True:
         current_sector = current_summary.get("sector_id")
@@ -3468,6 +3470,8 @@ async def _run_trade_route_loop(
 
         cycle_start = dict(current_summary)
         cycle_step_results: list[dict[str, Any]] = []
+        current_cycle_start = cycle_start
+        current_cycle_steps = cycle_step_results
 
         if current_sector != buy_sector:
             move_to_buy_prompt = build_move_to_sector_prompt(sector_id=buy_sector)
@@ -3598,6 +3602,8 @@ async def _run_trade_route_loop(
             }
         )
         current_summary = cycle_end
+        current_cycle_start = None
+        current_cycle_steps = None
 
     trade_order_recovery = None
     if stop_reason in {"sell_failed", "recovery_sell_failed"} and _cargo_units(current_summary, commodity) > 0:
@@ -3619,6 +3625,35 @@ async def _run_trade_route_loop(
         if isinstance(recovery_summary, dict):
             current_summary = recovery_summary
         if trade_order_recovery.get("success"):
+            if current_cycle_start is not None:
+                recovered_cycle_steps = list(current_cycle_steps or [])
+                recovered_cycle_steps.append(recovery_steps[-1])
+                cycle_results.append(
+                    {
+                        "cycle": len(cycle_results) + 1,
+                        "buy_sector": buy_sector,
+                        "sell_sector": sell_sector,
+                        "commodity": commodity,
+                        "start": current_cycle_start,
+                        "end": dict(current_summary),
+                        "profit": (
+                            current_summary["ship_credits"] - current_cycle_start["ship_credits"]
+                            if isinstance(current_summary.get("ship_credits"), int)
+                            and isinstance(current_cycle_start.get("ship_credits"), int)
+                            else None
+                        ),
+                        "warp_spent": (
+                            current_cycle_start["warp_power"] - current_summary["warp_power"]
+                            if isinstance(current_summary.get("warp_power"), int)
+                            and isinstance(current_cycle_start.get("warp_power"), int)
+                            else None
+                        ),
+                        "steps": recovered_cycle_steps,
+                        "recovered_sell": True,
+                    }
+                )
+                current_cycle_start = None
+                current_cycle_steps = None
             stop_reason = "sell_recovered"
 
     return {

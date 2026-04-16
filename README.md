@@ -258,6 +258,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   clear. It uses `session-trade-opportunities` internally, picks the current
   best visible route for `wealth`, `trading`, or raw `profit`, then runs the
   deterministic trade loop on that route.
+- when the deterministic route loop reaches the sell edge case, it now makes a
+  final exact trade-order sell attempt before giving up. That recovery path has
+  been proven live and now counts as a completed cycle when it finishes the job.
 - the exact trade-order surface is stronger than the older `sell all` phrasing.
   In live play, `session-trade-order --trade-type sell --quantity 9
   --commodity neuro_symbolics --price-per-unit 40` successfully routed the

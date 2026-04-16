@@ -12,16 +12,16 @@ in the live Gradient Bang production game.
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
 - Personal ship sector: `3236`
-- Personal ship credits: `6,379`
-- Personal ship warp: `44/500`
+- Personal ship credits: `6,739`
+- Personal ship warp: `23/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `3792`
+  - `gbheadless Auto Probe 1` (`autonomous_probe`) currently observed in sector `1187`
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `240` known sectors, currently observed at rank `43`
-  - wealth: on the visible board, currently observed at rank `83`
-  - trading: on the visible board, currently observed at rank `29` with `204,638` total trade volume across `214` trades
+  - exploration: on the visible board at `272` known sectors, currently observed at rank `39`
+  - wealth: on the visible board, currently observed at rank `79`
+  - trading: on the visible board, currently observed at rank `29` with `208,658` total trade volume across `218` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
@@ -31,7 +31,7 @@ in the live Gradient Bang production game.
   - use map-backed route selection instead of hop-delta guesses
   - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route
   - treat exact price-constrained sell orders as the strongest current trading surface, stronger than vague `sell all` prompts
-  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`
+  - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is temporarily warp-limited until a recharge surface is available again
   - revisit corporation-hauler trading and the unowned-ship mismatch after the current exploration/trading push
 
 ## Timeline
@@ -310,6 +310,28 @@ in the live Gradient Bang production game.
   - one probe run needed a retry with `--connect-timeout-ms 40000` after Daily connected but the browser bridge timed out on its ready gate
   - after the retry, the probe finished another `11` new sectors: `2695 -> 3792`
   - total known sectors rose to `240`
+
+### Goal-Driven Loops And Recovery
+
+- Tightened the route-loop accounting after the first `session-auto-trade-loop --goal wealth` pass.
+  The trade-order sell recovery was doing the important gameplay work, but the loop result undercounted it as `0` completed cycles.
+- Fixed that, then revalidated it live:
+  - `session-auto-trade-loop --goal wealth --max-cycles 1`
+  - selected `3786 -> 3236` on Quantum Foam from the live map-backed graph
+  - now reports `1` completed cycle correctly
+  - raised visible wealth from rank `83` to rank `79`
+- The auto-trade loop is now good enough that the client can pick a leaderboard goal and turn it into actual play without manual route transcription.
+- One caveat remains:
+  - the trading goal still leans on the same underlying sell surface
+  - the final exact trade-order recovery now rescues that state usefully, but the clean path is still more reliable for wealth pushes than for pure volume pushes
+- Parallel exploration stayed the better bargain:
+  - a follow-up probe run added `17` sectors
+  - another added `13` more
+  - total known sectors climbed from `240` to `272`
+  - exploration rank improved from `43` to `39`
+- There is still one visibility mismatch worth keeping in mind:
+  - the last probe-loop result reported a different end sector than a later standalone `session-ships` read
+  - that means post-task probe location should still be treated as eventually consistent across surfaces, even after the earlier task-watching fixes
 
 ### Post-Tutorial Findings
 
