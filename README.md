@@ -21,6 +21,7 @@ This scaffold supports:
 - raw Node `daily` and `smallwebrtc` diagnostic bridge modes
 - Python/CLI bridge integration for session connect/request/message/text flows
 - first-class live session reads for status, ports, map, chat history, ship lists, ship definitions, corporation data, task events, and quest status
+- a first-class `session-trade-opportunities` helper that ranks the current known-port graph
 - exact frontend prompt contracts for trade orders and ship purchase requests
 - first-class logistics helpers for warp recharge and credit transfers
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
@@ -105,6 +106,10 @@ gb-headless session-status \
 gb-headless session-known-ports \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
+gb-headless session-trade-opportunities \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --limit 12
 gb-headless session-chat-history \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN"
@@ -210,6 +215,7 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `quest-status`, `quest-assign`, and `quest-claim-reward` are the preferred
   trusted gameplay commands over raw `game-call`.
 - `session-status`, `session-known-ports`, `session-task-history`,
+  `session-trade-opportunities`,
   `session-task-events`, `session-map`, `session-chat-history`,
   `session-ships`, `session-ship-definitions`, `session-corporation`,
   `session-quest-status`, `session-assign-quest`, `session-claim-reward`,
@@ -237,6 +243,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   trade grinding. It uses bounded watched tasks rather than one broad
   freeform objective, retries transient step failures, and now places exact
   frontend-style trade orders when live price/quantity data is available.
+- `session-trade-opportunities` is the preferred decision surface before
+  picking a route. It reads current ship state plus the known-port graph and
+  ranks visible routes by raw profit, profit per hop, and trade volume per hop.
 - the exact trade-order surface is stronger than the older `sell all` phrasing.
   In live play, `session-trade-order --trade-type sell --quantity 9
   --commodity neuro_symbolics --price-per-unit 40` successfully routed the

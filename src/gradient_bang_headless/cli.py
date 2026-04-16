@@ -185,6 +185,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_session_connect_args(session_known_ports)
     session_known_ports.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
+    session_trade_opportunities = sub.add_parser(
+        "session-trade-opportunities",
+        help="Connect a session, read current status plus known ports, and rank the best visible trade routes",
+    )
+    _add_session_connect_args(session_trade_opportunities)
+    session_trade_opportunities.add_argument(
+        "--commodity",
+        choices=["quantum_foam", "retro_organics", "neuro_symbolics"],
+        action="append",
+        dest="commodities",
+        default=[],
+    )
+    session_trade_opportunities.add_argument("--limit", type=int, default=10)
+    session_trade_opportunities.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
     session_task_history = sub.add_parser(
         "session-task-history",
         help="Connect a session, request task history, and wait for task.history",
@@ -1007,6 +1022,29 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-trade-opportunities":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            status_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
+            ports_result = await bridge.get_known_ports(timeout=args.event_timeout_seconds)
+            summary = _rank_trade_opportunities(
+                status_result=status_result,
+                ports_result=ports_result,
+                commodities=args.commodities,
+                limit=args.limit,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "summary": summary,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -2822,6 +2860,124 @@ def _total_cargo_units(summary: dict[str, Any]) -> int:
 def _status_warp(summary: dict[str, Any]) -> int | None:
     warp = summary.get("warp_power")
     return warp if isinstance(warp, int) else None
+
+
+def _rank_trade_opportunities(
+    *,
+    status_result: dict[str, Any],
+    ports_result: dict[str, Any],
+    commodities: list[str],
+    limit: int,
+) -> dict[str, Any]:
+    if limit <= 0:
+        raise HeadlessBridgeError("session-trade-opportunities", "--limit must be > 0")
+
+    status_payload = _extract_bridge_payload(status_result)
+    ports_payload = _extract_bridge_payload(ports_result)
+
+    ship = status_payload.get("ship") if isinstance(status_payload, dict) else None
+    sector = status_payload.get("sector") if isinstance(status_payload, dict) else None
+    ports = ports_payload.get("ports") if isinstance(ports_payload, dict) else None
+
+    cargo_capacity = _coerce_int(ship.get("cargo_capacity")) if isinstance(ship, dict) else 0
+    ship_credits = _coerce_int(ship.get("credits")) if isinstance(ship, dict) else 0
+    current_sector = _coerce_int(sector.get("id")) if isinstance(sector, dict) else 0
+
+    commodity_list = commodities or ["quantum_foam", "retro_organics", "neuro_symbolics"]
+    if not isinstance(ports, list):
+        return {
+            "current_sector": current_sector or None,
+            "ship_credits": ship_credits,
+            "cargo_capacity": cargo_capacity,
+            "opportunities": [],
+        }
+
+    rows: list[dict[str, Any]] = []
+    for buy_port in ports:
+        if not isinstance(buy_port, dict):
+            continue
+        buy_sector = buy_port.get("sector")
+        if not isinstance(buy_sector, dict):
+            continue
+        buy_port_info = buy_sector.get("port")
+        if not isinstance(buy_port_info, dict):
+            continue
+        buy_prices = buy_port_info.get("prices")
+        if not isinstance(buy_prices, dict):
+            continue
+        buy_hops = _coerce_int(buy_port.get("hops_from_start"))
+
+        for sell_port in ports:
+            if not isinstance(sell_port, dict):
+                continue
+            sell_sector = sell_port.get("sector")
+            if not isinstance(sell_sector, dict):
+                continue
+            sell_port_info = sell_sector.get("port")
+            if not isinstance(sell_port_info, dict):
+                continue
+            sell_prices = sell_port_info.get("prices")
+            if not isinstance(sell_prices, dict):
+                continue
+
+            buy_sector_id = _coerce_int(buy_sector.get("id"))
+            sell_sector_id = _coerce_int(sell_sector.get("id"))
+            if buy_sector_id <= 0 or sell_sector_id <= 0 or buy_sector_id == sell_sector_id:
+                continue
+
+            sell_hops = _coerce_int(sell_port.get("hops_from_start"))
+            inter_port_hops = abs(sell_hops - buy_hops)
+            total_hops = buy_hops + inter_port_hops
+
+            for commodity in commodity_list:
+                buy_price = _coerce_int(buy_prices.get(commodity))
+                sell_price = _coerce_int(sell_prices.get(commodity))
+                spread = sell_price - buy_price
+                if buy_price <= 0 or spread <= 0:
+                    continue
+                max_units = min(cargo_capacity, ship_credits // buy_price)
+                if max_units <= 0:
+                    continue
+                expected_profit = spread * max_units
+                expected_volume = (buy_price + sell_price) * max_units
+                rows.append(
+                    {
+                        "commodity": commodity,
+                        "buy_sector": buy_sector_id,
+                        "sell_sector": sell_sector_id,
+                        "buy_price": buy_price,
+                        "sell_price": sell_price,
+                        "spread": spread,
+                        "max_units": max_units,
+                        "expected_profit": expected_profit,
+                        "expected_trade_volume": expected_volume,
+                        "distance_to_buy": buy_hops,
+                        "distance_buy_to_sell": inter_port_hops,
+                        "distance_total": total_hops,
+                        "profit_per_total_hop": round(expected_profit / max(total_hops, 1), 2),
+                        "volume_per_total_hop": round(expected_volume / max(total_hops, 1), 2),
+                    }
+                )
+
+    rows.sort(
+        key=lambda row: (
+            row["profit_per_total_hop"],
+            row["expected_profit"],
+            row["expected_trade_volume"],
+            -row["distance_total"],
+        ),
+        reverse=True,
+    )
+
+    return {
+        "current_sector": current_sector or None,
+        "ship_credits": ship_credits,
+        "cargo_capacity": cargo_capacity,
+        "best_by_profit": max(rows, key=lambda row: row["expected_profit"], default=None),
+        "best_by_profit_per_hop": max(rows, key=lambda row: row["profit_per_total_hop"], default=None),
+        "best_by_volume_per_hop": max(rows, key=lambda row: row["volume_per_total_hop"], default=None),
+        "opportunities": rows[:limit],
+    }
 
 
 def _port_price(summary: dict[str, Any], commodity: str) -> int | None:

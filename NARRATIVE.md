@@ -12,22 +12,24 @@ in the live Gradient Bang production game.
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
 - Personal ship sector: `3246`
-- Personal ship credits: `4,969`
-- Personal ship warp: `116/500`
+- Personal ship credits: `5,809`
+- Personal ship warp: `74/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `2554`
+  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `2695`
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `189` known sectors, currently observed at rank `46`
-  - wealth: on the visible board, currently observed at rank `91`
-  - trading: on the visible board, currently observed at rank `31` with `184,388` total trade volume across `194` trades
+  - exploration: on the visible board at `229` known sectors, currently observed at rank `43`
+  - wealth: on the visible board, currently observed at rank `84`
+  - trading: on the visible board, currently observed at rank `29` with `199,028` total trade volume across `208` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
 - Current frontier:
   - keep all three leaderboard categories visible while climbing deeper into each board
   - use repeated corporation-probe frontier loops as the primary exploration engine
+  - treat route selection as a first-class problem instead of relying on one remembered path
+  - use short-hop Quantum Foam loops for wealth and short-hop Neuro Symbolics loops for trade-volume pushes when the personal ship is nearby
   - treat exact price-constrained sell orders as the strongest current trading surface, stronger than vague `sell all` prompts
   - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`
   - revisit corporation-hauler trading and the unowned-ship mismatch after the current exploration/trading push
@@ -244,6 +246,35 @@ in the live Gradient Bang production game.
   - trading is starting to look better as price-constrained orders than as a single fixed destination route
   - wealth still lags because it follows realized profits and visible assets, so it remains the slowest board for now
 
+### Live Route Ranking And Split Strategy
+
+- Added a first-class `session-trade-opportunities` command so the client can rank the current known-port graph instead of relying on one remembered grind route.
+- On the live graph from sector `3246`, the best visible routes split by goal:
+  - best raw profit: `3236 -> 907` Neuro Symbolics
+  - best profit per hop: `318 -> 3246` Quantum Foam
+  - best trade volume per hop: `318 -> 3246` Neuro Symbolics
+- That gave a cleaner answer to the user’s leaderboard question than the old one-route mentality:
+  - exploration should keep using corp-probe frontier loops
+  - wealth should follow the short-hop QF route
+  - trading should follow the short-hop NS route
+- Proved the wealth-focused side first:
+  - ran `4` full QF cycles on `318 -> 3246`
+  - finished cleanly at `5,539` credits and `92` warp
+  - moved wealth from rank `91` to rank `86`
+  - moved trading volume from `184,388` to `191,018`
+- Then proved the trade-volume side:
+  - ran `3` full NS cycles on `318 -> 3246`
+  - finished cleanly at `5,809` credits and `74` warp
+  - moved trading from rank `31` to rank `29`
+  - moved wealth again from rank `86` to rank `84`
+- With the personal ship’s warp now lower, the probe became the obvious next lever again.
+  - sent one `20`-sector run from `2554 -> 1399`
+  - then another `20`-sector run from `1399 -> 2695`
+  - that pushed exploration from rank `46` to rank `43`
+  - total known sectors rose from `189` to `229`
+- The important strategic change is that the client is no longer just "good at one route."
+  It can now rank the live visible market graph and choose different loops for different leaderboard goals.
+
 ### Post-Tutorial Findings
 
 - Asked the live bot for further normal-player goals after finishing the tutorial lines.
@@ -274,5 +305,7 @@ The current weakness is operational brittleness rather than game design. Long-li
 The auth fix made a practical difference to how the game feels from the automation side. Before that, a good loop could still degrade into credential babysitting. After it, the headless client started feeling less like a brittle exploit chain and more like a real operator console.
 
 The exact trade-order discovery made the economy feel smarter than the earlier fixed-route grind. Once the bot started interpreting "sell 9 at at least 40" as "go find the best reachable market and do it," the trading layer felt less like rote waypoint replay and more like giving the game a concrete commercial intent.
+
+The route-ranking pass made the game feel more legible. Once the headless client could distinguish "best profit route" from "best trade-volume route," the leaderboard chase stopped feeling like random grinding and started feeling like running a small logistics desk with different KPIs.
 
 Overall impression: the core idea is strong. It feels novel, a little weird in a good way, and substantially more interesting than the average browser game because the player is effectively learning how to operate an in-world organization through language and automation.

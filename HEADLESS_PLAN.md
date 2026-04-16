@@ -25,8 +25,8 @@ The intent is not just to scaffold code, but to keep a running record of:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
    - exploration through repeated `session-corp-explore-loop` frontier runs
-   - trading through exact frontend trade-order prompts, with fixed routes now acting as fallback scaffolding instead of the main contract
-   - wealth through realized personal trading profits plus existing corp assets
+   - trading through the best visible route from `session-trade-opportunities`, currently short-hop `318 -> 3246` Neuro Symbolics for volume
+   - wealth through the best visible profit route, currently short-hop `318 -> 3246` Quantum Foam plus existing corp assets
    - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
 
 ## Current Milestones
@@ -148,6 +148,7 @@ Implemented:
   watching through `session-player-task`
 - first-class corp-ship tasking with real `task.start`/`task.finish` watching
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
+- a first-class `session-trade-opportunities` helper for ranking visible trade routes by profit and travel cost
 - first-class logistics helpers for warp recharge and credit transfers
 - a deterministic `session-trade-route-loop` built from bounded watched tasks,
   with per-step retries after the first long production run exposed transient
@@ -202,20 +203,20 @@ Latest live state observed through the session surface:
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
 - personal ship sector: `3246`
-- personal ship credits: `4969`
-- personal ship warp power: `116`
+- personal ship credits: `5809`
+- personal ship warp power: `74`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `2554`
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `2695`
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- known sectors: `189`
-- corporation sectors visited: `184`
+- known sectors: `229`
+- corporation sectors visited: `224`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `189` known sectors, currently observed at rank `46`
-- visible trading board entry: `184388` total volume, currently observed at rank `31`
-- visible wealth board entry: currently observed at rank `91`
+- visible exploration board entry: `229` known sectors, currently observed at rank `43`
+- visible trading board entry: `199028` total volume, currently observed at rank `29`
+- visible wealth board entry: currently observed at rank `84`
 
 Latest live progression proved:
 
@@ -306,10 +307,24 @@ Latest live progression proved:
   - an exact `SELL 9 Neuro Symbolics @ 40` order moved the Kestrel from sector
     `1009` to sector `3246`
   - it sold the full remainder at `45` with a real `task.finish`
+- added `session-trade-opportunities` to rank the current known-port graph by:
+  - raw profit
+  - profit per hop
+  - trade volume per hop
+- used that helper to split the live trading strategy by leaderboard goal:
+  - best raw profit from the visible graph: `3236 -> 907` Neuro Symbolics
+  - best current wealth route from the ship's location: `318 -> 3246` Quantum Foam
+  - best current trading-volume route from the ship's location: `318 -> 3246` Neuro Symbolics
+- proved both short-hop routes live:
+  - `4` QF cycles pushed wealth rank `91 -> 86`
+  - `3` NS cycles pushed trading rank `31 -> 29` and wealth rank `86 -> 84`
+- pushed exploration further with two more probe runs:
+  - `2554 -> 1399`
+  - `1399 -> 2695`
 - current confirmed live board state:
-  - exploration rank `46`
-  - trading rank `31`
-  - wealth rank `91`
+  - exploration rank `43`
+  - trading rank `29`
+  - wealth rank `84`
 
 Interpretation:
 
@@ -318,11 +333,14 @@ Interpretation:
 - the remaining work is expanding reliable post-tutorial surfaces and
   documenting which website actions still degrade when driven headlessly
 - the next concrete live-game push is now:
-  - keep compounding exploration with cheap probe frontier loops
-  - turn the direct exact trade-order discovery into a more autonomous
-    price-constrained trading surface
-  - use realized trade profits to push wealth high enough that it no longer
-    hovers near the visible-board floor
+  - keep compounding exploration with cheap probe frontier loops until the
+    current visible graph yields a better corp-expansion opportunity
+  - turn `session-trade-opportunities` into a more autonomous route runner or
+    price-constrained trading loop, so route choice becomes data-driven rather
+    than manual
+  - use realized trade profits to reach the next meaningful hull upgrade while
+    keeping the account climbing on wealth instead of hovering just above the
+    visible-board floor
   - either make unowned-ship collection work or document it as a live bot/path
     bug with clear reproduction
 
