@@ -18,7 +18,7 @@ in the live Gradient Bang production game.
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
   - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-  - `gbheadless Auto Probe I` (`autonomous_probe`) in sector `3336` with `421/500` warp after the latest frontier push
+  - `gbheadless Auto Probe I` (`autonomous_probe`) in sector `3883` with `404/500` warp after the latest frontier scan
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
   - exploration: on the visible board at `344` known sectors, currently observed at rank `34`
@@ -29,7 +29,7 @@ in the live Gradient Bang production game.
   - `tutorial_corporations`
 - Current frontier:
   - keep all three leaderboard categories visible while climbing deeper into each board
-  - use repeated corporation-probe frontier loops as the primary exploration engine
+  - use validated frontier selection plus repeated corporation-probe frontier loops as the primary exploration engine
   - use port-code-aware, map-backed route selection instead of naive price comparisons
   - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
   - use `session-wealth-loadout` when the ship is parked on a cheap legal seller and the immediate goal is wealth-board rank instead of realized profit
@@ -38,6 +38,9 @@ in the live Gradient Bang production game.
   - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
   - use cheap cargo as a wealth-board lever, because the live leaderboard currently values cargo at a flat `100` credits per unit
   - prefer fresh `1000`-credit autonomous probes over long rescue chains when the goal is exploration rank
+  - treat raw dangling map stubs as heuristics only; validate them before using them as exploration targets
+  - treat the local `3883` probe pocket as saturated unless a future validated scan says otherwise
+  - the next confirmed exploration branch is `4790 -> 4407`
   - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now being used as a rotating wealth/trading shuttle around sectors `1808` and `256`
   - keep trade loops chunked and observable; large blind route batches are productive but still too opaque to count as a clean bounded surface
 
@@ -833,6 +836,41 @@ in the live Gradient Bang production game.
     sectors `3513`, `2814`, and `3883` all reported `0` unvisited sectors
   - the next exploration improvement needs better frontier selection, not just
     better task watching
+
+### Validated Frontier Selection
+
+- I fixed `session-map` so it can resolve the current sector automatically when
+  `--center-sector` is omitted. That mattered because the next exploration step
+  needed a reliable live map read, not another manual center lookup.
+- I then added `session-frontier-candidates` to rank frontier sectors from the
+  live `map.local` and `map.region` surface instead of relying on remembered
+  frontier anecdotes.
+- The first live pass exposed a subtle but important failure mode:
+  - raw dangling map stubs are not enough
+  - some of them are only off-window known sectors, not genuine unexplored
+    frontier
+- I hardened the command by validating each stub sector the useful way:
+  - try to center `local_map_region` on the stub
+  - if the server says the center sector must be visited, the stub is real
+    frontier
+  - if the map centers successfully, the stub was already known and the
+    frontier signal was false
+- That changed the exploration diagnosis immediately:
+  - the probe-centered pocket around sector `3883` is locally exhausted
+  - none of the validated top local branches around `gbheadless Auto Probe I`
+    exposed a genuinely unvisited stub
+- The player-centered validated scan found the first confirmed live branch that
+  still matters:
+  - anchor sector `4790`
+  - real unvisited stub `4407`
+- That is the strongest exploration target discovered so far because it is no
+  longer just a dangling edge in a truncated map window. It is a branch the
+  live server itself still refuses to center as visited.
+- I started a redeploy of `gbheadless Auto Probe I` toward sector `4790`, but
+  it did not settle into a clean bounded result within the current turn window.
+  The strategic takeaway still stands: the next exploration loops should be
+  driven by validated frontier branches like `4790 -> 4407`, not by repeating
+  the `3883` pocket.
 
 The game feels better when the friction is in choosing the next frontier rather
 than in fighting the control surface. Trading is now mostly an execution

@@ -288,6 +288,25 @@ def build_parser() -> argparse.ArgumentParser:
     session_map.add_argument("--max-sectors", type=int)
     session_map.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
+    session_frontier_candidates = sub.add_parser(
+        "session-frontier-candidates",
+        help="Connect a session, inspect visited/unvisited map nodes, and rank the best frontier sectors for exploration",
+    )
+    _add_session_connect_args(session_frontier_candidates)
+    session_frontier_candidates.add_argument("--center-sector", type=int)
+    session_frontier_candidates.add_argument("--ship-name")
+    session_frontier_candidates.add_argument("--ship-id")
+    session_frontier_candidates.add_argument("--limit", type=int, default=10)
+    session_frontier_candidates.add_argument("--max-hops", type=int, default=8)
+    session_frontier_candidates.add_argument("--max-sectors", type=int, default=500)
+    session_frontier_candidates.add_argument(
+        "--validate-limit",
+        type=int,
+        default=10,
+        help="How many top stub-bearing candidates to validate by probing whether their stub sectors are centerable; 0 disables validation",
+    )
+    session_frontier_candidates.add_argument("--event-timeout-seconds", type=float, default=30.0)
+
     session_chat_history = sub.add_parser(
         "session-chat-history",
         help="Connect a session, request chat history, and wait for chat.history",
@@ -1374,8 +1393,17 @@ async def dispatch(args: argparse.Namespace) -> int:
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
             connect_result = await _connect_session_bridge(bridge, args, config)
+            center_sector = args.center_sector
+            if center_sector is None:
+                status_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
+                center_sector = _coerce_int(_extract_bridge_payload(status_result).get("sector", {}).get("id"))
+                if center_sector <= 0:
+                    raise HeadlessBridgeError(
+                        "session-map",
+                        "could not determine current sector for map center",
+                    )
             action_result = await bridge.get_my_map(
-                center_sector=args.center_sector,
+                center_sector=center_sector,
                 bounds=args.bounds,
                 fit_sectors=args.fit_sectors or None,
                 max_hops=args.max_hops,
@@ -1387,6 +1415,62 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-frontier-candidates":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            focus_ship = None
+            origin_sector = args.center_sector or 0
+            if args.ship_id or args.ship_name:
+                ship_result = await _fetch_owned_ship_snapshot(
+                    bridge,
+                    ship_id=args.ship_id,
+                    ship_name=args.ship_name,
+                    timeout=args.event_timeout_seconds,
+                )
+                focus_ship = ship_result["ship"]
+                if origin_sector <= 0:
+                    origin_sector = _coerce_int(focus_ship.get("sector")) or _coerce_int(
+                        focus_ship.get("sector_id")
+                    )
+            if origin_sector <= 0:
+                status_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
+                origin_sector = _coerce_int(_extract_bridge_payload(status_result).get("sector", {}).get("id"))
+            if origin_sector <= 0:
+                raise HeadlessBridgeError(
+                    "session-frontier-candidates",
+                    "could not determine a center sector",
+                )
+            map_result = await bridge.get_my_map(
+                center_sector=origin_sector,
+                max_hops=args.max_hops,
+                max_sectors=args.max_sectors,
+                timeout=args.event_timeout_seconds,
+            )
+            summary = _rank_frontier_candidates(
+                origin_sector=origin_sector,
+                map_result=map_result,
+                focus_ship=focus_ship,
+                limit=args.limit,
+            )
+            if args.validate_limit > 0:
+                summary = await _validate_frontier_candidates(
+                    bridge,
+                    summary=summary,
+                    validate_limit=args.validate_limit,
+                    timeout=args.event_timeout_seconds,
+                )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "summary": summary,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -4282,6 +4366,277 @@ def _rank_nearest_mega_ports(
         "current_sector": current_sector or None,
         "nearest": rows[:limit],
     }
+
+
+def _map_neighbor_ids(sector: dict[str, Any]) -> set[int]:
+    neighbor_ids: set[int] = set()
+    lanes = sector.get("lanes")
+    if isinstance(lanes, list):
+        for lane in lanes:
+            if not isinstance(lane, dict):
+                continue
+            neighbor = _coerce_int(lane.get("to"))
+            if neighbor > 0:
+                neighbor_ids.add(neighbor)
+    adjacent_sectors = sector.get("adjacent_sectors")
+    if isinstance(adjacent_sectors, dict):
+        for sector_id in adjacent_sectors.keys():
+            neighbor = _coerce_int(sector_id)
+            if neighbor > 0:
+                neighbor_ids.add(neighbor)
+    return neighbor_ids
+
+
+def _two_hop_unvisited_count(
+    *,
+    sector_id: int,
+    sectors_by_id: dict[int, dict[str, Any]],
+    graph: dict[int, set[int]],
+) -> int:
+    if sector_id <= 0:
+        return 0
+    seen: set[int] = {sector_id}
+    queue: deque[tuple[int, int]] = deque([(sector_id, 0)])
+    unvisited: set[int] = set()
+    while queue:
+        current_sector, depth = queue.popleft()
+        if depth >= 2:
+            continue
+        for neighbor in graph.get(current_sector, set()):
+            if neighbor in seen:
+                continue
+            seen.add(neighbor)
+            neighbor_sector = sectors_by_id.get(neighbor)
+            if isinstance(neighbor_sector, dict) and neighbor_sector.get("visited") is not True:
+                unvisited.add(neighbor)
+            queue.append((neighbor, depth + 1))
+    return len(unvisited)
+
+
+def _rank_frontier_candidates(
+    *,
+    origin_sector: int,
+    map_result: dict[str, Any],
+    focus_ship: dict[str, Any] | None,
+    limit: int,
+) -> dict[str, Any]:
+    if limit <= 0:
+        raise HeadlessBridgeError("session-frontier-candidates", "--limit must be > 0")
+
+    map_payload = _extract_bridge_payload(map_result)
+    sectors = map_payload.get("sectors") if isinstance(map_payload, dict) else None
+    if not isinstance(sectors, list):
+        return {
+            "origin_sector": origin_sector or None,
+            "focus_ship": None,
+            "map_sector_count": 0,
+            "visited_sector_count": 0,
+            "unvisited_sector_count": 0,
+            "frontier_sector_count": 0,
+            "recommended": None,
+            "candidates": [],
+        }
+
+    sectors_by_id: dict[int, dict[str, Any]] = {}
+    for sector in sectors:
+        if not isinstance(sector, dict):
+            continue
+        sector_id = _coerce_int(sector.get("id"))
+        if sector_id > 0:
+            sectors_by_id[sector_id] = sector
+
+    graph = _map_graph_from_payload(map_payload)
+    distances = _shortest_path_lengths(graph, start=origin_sector)
+    rows: list[dict[str, Any]] = []
+
+    for sector_id, sector in sectors_by_id.items():
+        distance = distances.get(sector_id)
+        if distance is None:
+            continue
+        visited = sector.get("visited") is True
+        neighbor_ids = _map_neighbor_ids(sector)
+        known_neighbor_ids = sorted(neighbor for neighbor in neighbor_ids if neighbor in sectors_by_id)
+        visited_neighbor_ids = [
+            neighbor
+            for neighbor in known_neighbor_ids
+            if sectors_by_id.get(neighbor, {}).get("visited") is True
+        ]
+        unvisited_neighbor_ids = [
+            neighbor
+            for neighbor in known_neighbor_ids
+            if sectors_by_id.get(neighbor, {}).get("visited") is not True
+        ]
+        stub_neighbor_ids = sorted(neighbor for neighbor in neighbor_ids if neighbor not in sectors_by_id)
+        two_hop_unvisited = _two_hop_unvisited_count(
+            sector_id=sector_id,
+            sectors_by_id=sectors_by_id,
+            graph=graph,
+        )
+        immediate_discovery = 0 if visited else 1
+        frontier_neighbors = len(unvisited_neighbor_ids) + len(stub_neighbor_ids)
+        frontier_score = immediate_discovery * 20 + frontier_neighbors * 8 + two_hop_unvisited * 2 - distance
+        if immediate_discovery == 0 and frontier_neighbors == 0 and two_hop_unvisited == 0:
+            continue
+        rows.append(
+            {
+                "sector_id": sector_id,
+                "visited": visited,
+                "candidate_type": "unvisited_target" if immediate_discovery else "visited_anchor",
+                "distance": distance,
+                "path": _shortest_path(graph, start=origin_sector, target=sector_id),
+                "frontier_score": frontier_score,
+                "immediate_discovery": immediate_discovery,
+                "frontier_neighbors": frontier_neighbors,
+                "unvisited_neighbor_count": len(unvisited_neighbor_ids),
+                "stub_neighbor_count": len(stub_neighbor_ids),
+                "two_hop_unvisited": two_hop_unvisited,
+                "visited_neighbor_count": len(visited_neighbor_ids),
+                "neighbor_count": len(neighbor_ids),
+                "unvisited_neighbors": unvisited_neighbor_ids[:8],
+                "stub_neighbors": stub_neighbor_ids[:8],
+                "port_code": (
+                    sector.get("port", {}).get("code")
+                    if isinstance(sector.get("port"), dict)
+                    else None
+                ),
+                "region": sector.get("region"),
+                "source": sector.get("source"),
+                "hops_from_center": _coerce_int(sector.get("hops_from_center")) or None,
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            -row["frontier_score"],
+            -row["immediate_discovery"],
+            -row["frontier_neighbors"],
+            -row["two_hop_unvisited"],
+            row["distance"],
+            row["sector_id"],
+        )
+    )
+
+    visited_sector_count = sum(1 for sector in sectors_by_id.values() if sector.get("visited") is True)
+    unvisited_sector_count = sum(1 for sector in sectors_by_id.values() if sector.get("visited") is not True)
+    focus_ship_summary = None
+    if isinstance(focus_ship, dict):
+        focus_ship_summary = {
+            "ship_id": focus_ship.get("ship_id"),
+            "ship_name": focus_ship.get("ship_name") or focus_ship.get("name"),
+            "sector": _coerce_int(focus_ship.get("sector")) or _coerce_int(focus_ship.get("sector_id")) or None,
+            "warp_power": _coerce_int(focus_ship.get("warp_power")) or None,
+            "ship_type": focus_ship.get("ship_type"),
+        }
+
+    return {
+        "origin_sector": origin_sector or None,
+        "focus_ship": focus_ship_summary,
+        "map_sector_count": len(sectors_by_id),
+        "visited_sector_count": visited_sector_count,
+        "unvisited_sector_count": unvisited_sector_count,
+        "frontier_sector_count": len(rows),
+        "recommended": rows[0] if rows else None,
+        "candidates": rows[:limit],
+    }
+
+
+def _frontier_candidate_sort_key(row: dict[str, Any]) -> tuple[int, int, int, int, int, int]:
+    score = row.get("validated_frontier_score", row.get("frontier_score", 0))
+    return (
+        -int(score) if isinstance(score, int) else 0,
+        -_coerce_int(row.get("immediate_discovery")),
+        -_coerce_int(row.get("frontier_neighbors")),
+        -_coerce_int(row.get("two_hop_unvisited")),
+        _coerce_int(row.get("distance")),
+        _coerce_int(row.get("sector_id")),
+    )
+
+
+async def _validate_frontier_candidates(
+    bridge: HeadlessBridgeProcess,
+    *,
+    summary: dict[str, Any],
+    validate_limit: int,
+    timeout: float,
+) -> dict[str, Any]:
+    if validate_limit <= 0:
+        return summary
+    candidates = summary.get("candidates")
+    if not isinstance(candidates, list):
+        return summary
+
+    validated_candidates = 0
+    validated_stub_sectors = 0
+    for candidate in candidates:
+        if validated_candidates >= validate_limit:
+            break
+        if not isinstance(candidate, dict):
+            continue
+        stub_neighbors = candidate.get("stub_neighbors")
+        if not isinstance(stub_neighbors, list) or not stub_neighbors:
+            continue
+
+        validations: list[dict[str, Any]] = []
+        for sector_id in stub_neighbors:
+            neighbor = _coerce_int(sector_id)
+            if neighbor <= 0:
+                continue
+            validated_stub_sectors += 1
+            try:
+                probe_result = await bridge.get_my_map(
+                    center_sector=neighbor,
+                    max_hops=1,
+                    max_sectors=20,
+                    timeout=min(timeout, 15.0),
+                )
+            except HeadlessBridgeError as exc:
+                message = exc.message or str(exc)
+                if "Center sector" in message and "visited" in message:
+                    validations.append(
+                        {
+                            "sector_id": neighbor,
+                            "status": "unvisited",
+                        }
+                    )
+                else:
+                    validations.append(
+                        {
+                            "sector_id": neighbor,
+                            "status": "error",
+                            "error": message,
+                        }
+                    )
+            else:
+                payload = _extract_bridge_payload(probe_result)
+                sectors = payload.get("sectors") if isinstance(payload, dict) else None
+                validations.append(
+                    {
+                        "sector_id": neighbor,
+                        "status": "centerable",
+                        "sector_count": len(sectors) if isinstance(sectors, list) else None,
+                    }
+                )
+
+        validated_candidates += 1
+        candidate["validated_stub_neighbors"] = validations
+        validated_unvisited = sum(1 for item in validations if item.get("status") == "unvisited")
+        validated_centerable = sum(1 for item in validations if item.get("status") == "centerable")
+        candidate["validated_unvisited_stub_count"] = validated_unvisited
+        candidate["validated_centerable_stub_count"] = validated_centerable
+        candidate["validated_frontier_score"] = (
+            _coerce_int(candidate.get("frontier_score"))
+            + validated_unvisited * 25
+            - validated_centerable * 15
+        )
+
+    candidates.sort(key=_frontier_candidate_sort_key)
+    summary["recommended"] = candidates[0] if candidates else None
+    summary["validation"] = {
+        "validated_candidate_count": validated_candidates,
+        "validated_stub_sector_count": validated_stub_sectors,
+        "method": "probe stub sectors with local_map_region; a center-sector error implies the stub is not yet visited",
+    }
+    return summary
 
 
 def _rank_trade_opportunities(

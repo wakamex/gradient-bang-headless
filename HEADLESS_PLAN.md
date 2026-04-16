@@ -24,7 +24,8 @@ The intent is not just to scaffold code, but to keep a running record of:
 5. Keep extending post-tutorial live-player surfaces from the website:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
-   - exploration through repeated `session-corp-explore-loop` frontier runs
+   - exploration through validated `session-frontier-candidates` selection,
+     then repeated `session-corp-explore-loop` runs from confirmed branches
    - trading through short exact-order or single-route batches on the current
      best visible profit route, with `session-liquidate-cargo` used to reset
      stranded holds cleanly and `session-load-cargo` used to restock the exact
@@ -158,6 +159,9 @@ Implemented:
   watching through `session-player-task`
 - first-class corp-ship tasking with real `task.start`/`task.finish` watching
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
+- a first-class `session-frontier-candidates` helper for ranking local
+  frontier anchors and validating which dangling map stubs are genuinely
+  unvisited
 - a first-class `session-trade-opportunities` helper for ranking visible trade routes by profit and travel cost
 - map-backed route ranking using the live `session-map` graph instead of hop-delta approximations
 - a first-class `session-auto-trade-loop` that chooses a route by goal and runs it
@@ -214,12 +218,19 @@ Current blocker:
     port code is checked; the client now blocks that class of mistake, but the
     remaining work is keeping every trading helper aligned with legal `B`/`S`
     directionality
+  - local map stubs can be false frontier because already-known off-window
+    sectors still appear as dangling neighbors; `session-frontier-candidates`
+    now validates those stubs, and the `3883` probe pocket looks locally
+    exhausted after validation
   - the exact unowned-ship collect prompt currently routes to `salvage_collect`
     and fails with `404 Salvage not available` even when `status.snapshot`
     reports `unowned_ships` in the current sector
   - `corporation.data` can lag behind `ships.list` after a successful
     corporation-ship task, so post-task verification should prefer `ships.list`
     when sector freshness matters
+  - the next exploration automation step is a full `session-probe-frontier-loop`
+    that picks, validates, and executes frontier branches without manual
+    handoff
 
 ### Current Live State
 
@@ -228,22 +239,22 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `256`
-- personal ship credits: `10179`
-- personal ship warp power: `182`
+- personal ship sector: `1808`
+- personal ship credits: `9369`
+- personal ship warp power: `197`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `1244` with `420/500` warp and an active explore task after a partial frontier run
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `3883` with `404/500` warp after the latest validated frontier scan
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
-- cargo: empty
+- cargo: `30` `retro_organics`
 - fighters: `300`
 - known sectors: `344`
 - corporation sectors visited: `338`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
 - visible exploration board entry: `344` known sectors, currently observed at rank `34`
-- visible trading board entry: `278242` total volume, currently observed at rank `28`
-- visible wealth board entry: currently observed at rank `69` with visible row value `43779`
+- visible trading board entry: `271312` total volume, currently observed at rank `27`
+- visible wealth board entry: currently observed at rank `64` with visible row value `45969`
 
 Latest live progression proved:
 
@@ -277,6 +288,14 @@ Latest live progression proved:
   personal-ship objectives
 - added first-class `session-recharge-warp` and `session-transfer-credits`
   commands after proving both regular-player logistics flows live
+- fixed `session-map` so it can resolve the current sector automatically when
+  no explicit `--center-sector` is provided
+- added `session-frontier-candidates`, then validated the real frontier shape
+  on production:
+  - the local `3883` probe pocket has no validated frontier in its top branch
+    candidates
+  - the first confirmed player-visible frontier branch is `4790 -> 4407`
+    after validating that `4407` is not yet centerable
 - pushed the corporation probe through a 29-sector exploration run that
   entered the visible exploration board at `54` sectors
 - mapped the current best live trade ladder by capital band:
