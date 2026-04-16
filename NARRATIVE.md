@@ -11,16 +11,16 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `3358`
-- Personal ship credits: `1,205`
-- Personal ship warp: `191/500`
+- Personal ship sector: `472`
+- Personal ship credits: `2,015`
+- Personal ship warp: `149/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
   - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `867`
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `54` sectors visited, observed around rank `98-99`
-  - wealth: off the visible board, estimated `32,205` total wealth with a current gap of about `3,440`
+  - exploration: on the visible board at `54` sectors visited, currently observed at rank `100`
+  - wealth: off the visible board, estimated `33,015` total wealth with a current gap of about `2,656`
   - trading: still off the visible board
 - Completed quests:
   - `tutorial`
@@ -136,6 +136,11 @@ in the live Gradient Bang production game.
   - sold all `30` at sector `3358`
   - finished at `1,205` credits with `191` warp in sector `3358`
 - The headless client is now no longer just replaying the tutorial route. It has a live-tested economic ladder that changes with capital and current location.
+- Pushed the ladder one step further with a repeated full-hold `472 <-> 3358` Neuro Symbolics loop:
+  - started from `1,205` credits at sector `3358`
+  - completed `3` full `30 NS` buy/sell runs
+  - stopped at sector `472` when warp fell below the configured threshold
+  - final live state after that repetition was `2,015` credits and `149` warp
 
 ### Post-Tutorial Findings
 

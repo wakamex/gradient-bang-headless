@@ -189,19 +189,19 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `3358`
-- personal ship credits: `1205`
+- personal ship sector: `472`
+- personal ship credits: `2015`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `867`
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- warp power: `191`
+- warp power: `149`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `54` sectors visited, observed around rank `98-99`
-- estimated wealth: `32205`
-- visible wealth gap: about `3440`
+- visible exploration board entry: `54` sectors visited, currently observed at rank `100`
+- estimated wealth: `33015`
+- visible wealth gap: about `2656`
 
 Latest live progression proved:
 
@@ -242,6 +242,9 @@ Latest live progression proved:
 - proved the economic ladder live and grew the personal ship from `31`
   credits to `1205` credits while staying entirely on the regular-player
   session surface
+- repeated the higher-capital full-hold `472 <-> 3358` NS loop three more
+  times and grew the ship further to `2015` credits before stopping at the
+  configured warp floor
 
 Interpretation:
 
