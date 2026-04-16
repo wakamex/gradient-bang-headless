@@ -23,6 +23,7 @@ This scaffold supports:
 - first-class live session reads for status, ports, map, chat history, ship lists, ship definitions, corporation data, task events, and quest status
 - exact frontend prompt contracts for trade orders and ship purchase requests
 - first-class logistics helpers for warp recharge and credit transfers
+- a first-class `session-corp-explore-loop` for repeated probe frontier runs
 - a deterministic `session-trade-route-loop` for repeatable personal trading
 - a reusable `loop` runner for long bot-driven objectives with state polling and reprompts
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
@@ -139,6 +140,13 @@ gb-headless session-corp-task \
   --ship-id eab4cd \
   --task-description 'travel to sector 1908 and stop there.' \
   --wait-for-finish
+gb-headless session-corp-explore-loop \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --ship-name "gbheadless Auto Probe 1" \
+  --ship-id eab4cd \
+  --new-sectors-per-run 20 \
+  --max-runs 3
 gb-headless session-collect-unowned-ship \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \
@@ -217,6 +225,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-corp-task` is a headless convenience wrapper for live corp-ship
   tasking. It uses regular player text, then waits on real `task.start` and
   `task.finish` events for the named corporation ship.
+- `session-corp-explore-loop` is the preferred exploration grinder. It builds
+  the proven probe-frontier objective, watches real corp-ship task events, and
+  accepts observed sector/map progress even when one lifecycle event is late.
 - `session-player-task` does the same for the personal ship. It is the
   preferred surface for short deterministic bot-driven objectives like
   single-route trade loops or move-and-sell steps.
@@ -224,7 +235,15 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   wrappers around regular-player logistics prompts that were proven live.
 - `session-trade-route-loop` is the preferred surface for repeatable personal
   trade grinding. It uses bounded watched tasks rather than one broad
-  freeform objective, and it retries transient step failures.
+  freeform objective, retries transient step failures, and now places exact
+  frontend-style trade orders when live price/quantity data is available.
+- the exact trade-order surface is stronger than the older `sell all` phrasing.
+  In live play, `session-trade-order --trade-type sell --quantity 9
+  --commodity neuro_symbolics --price-per-unit 40` successfully routed the
+  ship to a better market and sold at `45`, not just the requested floor.
+- session commands now also harden auth for long-running play:
+  if `/start` returns `401` on the default credential path, the client logs in
+  again once and retries the connect automatically.
 - `session-trade-order`, `session-purchase-ship`, and
   `session-purchase-corp-ship` send the exact strings the upstream React
   client builds in `TradePanel.tsx` and `ShipDetails.tsx`.
@@ -235,13 +254,15 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   relying on one-off shell snippets.
 - `.env` values are used automatically for login/session defaults, so the
   shortest commands can omit repeated credentials.
+- repo-root `.env` is authoritative for `GB_*` values. This avoids stale
+  inherited shell credentials shadowing freshly synced tokens.
 - `auth-sync` is the shortest way to populate runtime auth state in `.env`:
   it logs in, writes `GB_ACCESS_TOKEN` and `GB_REFRESH_TOKEN`, and writes
   `GB_CHARACTER_ID` when it can select a character by configured name or
   by a single-character account.
-- during long live sessions, if fresh `/start` calls begin returning `401`,
-  passing a newly issued `--access-token` inline is a reliable immediate
-  workaround while investigating env/token staleness.
+- if you explicitly pass `--access-token`, the client respects it and will not
+  silently replace it on failure; the auto-relogin path only applies to the
+  default credential flow.
 - `confirm-url` accepts the raw Supabase verify URL, HTML-escaped links copied from the email body, or a redirecting link that eventually lands on it.
 - `game-call` auto-injects `character_id` and `actor_character_id` when configured.
 - `events-since` can batch `character_ids`, `ship_ids`, and `corp_id`, and can follow the stream with polling.

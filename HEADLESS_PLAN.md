@@ -24,10 +24,10 @@ The intent is not just to scaffold code, but to keep a running record of:
 5. Keep extending post-tutorial live-player surfaces from the website:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
-   - exploration through corporation probe runs
-   - wealth through repeated personal profits plus existing corp assets
-   - trading through the retried deterministic `3786 -> 1009` Neuro Symbolics route
-   - medium-term capital target: a better personal trading ship, not more one-off prompt experiments
+   - exploration through repeated `session-corp-explore-loop` frontier runs
+   - trading through exact frontend trade-order prompts, with fixed routes now acting as fallback scaffolding instead of the main contract
+   - wealth through realized personal trading profits plus existing corp assets
+   - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
 
 ## Current Milestones
 
@@ -147,10 +147,18 @@ Implemented:
 - first-class personal-ship tasking with real `task.start`/`task.finish`
   watching through `session-player-task`
 - first-class corp-ship tasking with real `task.start`/`task.finish` watching
+- a first-class `session-corp-explore-loop` for repeated probe frontier runs
 - first-class logistics helpers for warp recharge and credit transfers
 - a deterministic `session-trade-route-loop` built from bounded watched tasks,
   with per-step retries after the first long production run exposed transient
   move failures
+- player-step validation that now polls live `status.snapshot` instead of
+  waiting blindly for every `task.finish`
+- route-loop trade steps that now prefer exact frontend trade-order prompts
+  when live price and quantity data is available
+- session-connect auth hardening:
+  - repo-root `.env` now wins for `GB_*` credentials
+  - session commands auto-login and retry once when `/start` returns `401`
 - exact frontend prompt contract for collecting an unowned ship in the sector
 - a reusable `loop` runner for long bot-driven objectives
 
@@ -193,21 +201,21 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `1009`
-- personal ship credits: `4987`
-- personal ship warp power: `278`
+- personal ship sector: `3246`
+- personal ship credits: `4969`
+- personal ship warp power: `116`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `446`
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `2554`
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- known sectors: `84`
-- corporation sectors visited: `79`
+- known sectors: `189`
+- corporation sectors visited: `184`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `84` known sectors, currently observed at rank `77`
-- visible trading board entry: `123386` total volume, currently observed at rank `49`
-- visible wealth board entry: currently observed at rank `92`
+- visible exploration board entry: `189` known sectors, currently observed at rank `46`
+- visible trading board entry: `184388` total volume, currently observed at rank `31`
+- visible wealth board entry: currently observed at rank `91`
 
 Latest live progression proved:
 
@@ -274,6 +282,34 @@ Latest live progression proved:
   - exploration rank `77`
   - trading rank `49`
   - wealth rank `92`
+- traced the live `/start` `401` issue to stale inherited env winning over
+  repo `.env`, then fixed the client so `GB_*` values from `.env` are
+  authoritative and session connects auto-login/retry once on `401`
+- verified the auth hardening by resuming default-path session commands without
+  manual token injection
+- added `session-corp-explore-loop`, then hardened it twice:
+  - first by fixing corp-ship matching through the `server_message` wrapper
+  - then by accepting observed ship/map progress when a probe task advanced
+    successfully without a timely `task.finish`
+- used that loop for three live frontier pushes:
+  - `2864 -> 2071 -> 852`
+  - `852 -> 72`
+  - `72 -> 2554`
+- turned those probe runs into real leaderboard movement:
+  - exploration rank `67 -> 54 -> 48 -> 46`
+  - known sectors `105 -> 147 -> 167 -> 189`
+- hardened `session-trade-route-loop` so player-step validation now polls live
+  `status.snapshot` instead of waiting blindly for every `task.finish`
+- switched the route loop to exact frontend trade-order prompts when live
+  port-price data is available
+- proved the stronger trading contract directly:
+  - an exact `SELL 9 Neuro Symbolics @ 40` order moved the Kestrel from sector
+    `1009` to sector `3246`
+  - it sold the full remainder at `45` with a real `task.finish`
+- current confirmed live board state:
+  - exploration rank `46`
+  - trading rank `31`
+  - wealth rank `91`
 
 Interpretation:
 
@@ -282,9 +318,11 @@ Interpretation:
 - the remaining work is expanding reliable post-tutorial surfaces and
   documenting which website actions still degrade when driven headlessly
 - the next concrete live-game push is now:
-  - fund and task the new auto hauler
-  - keep probing for new live contract surfaces through exploration and the
-    regular player session
+  - keep compounding exploration with cheap probe frontier loops
+  - turn the direct exact trade-order discovery into a more autonomous
+    price-constrained trading surface
+  - use realized trade profits to push wealth high enough that it no longer
+    hovers near the visible-board floor
   - either make unowned-ship collection work or document it as a live bot/path
     bug with clear reproduction
 

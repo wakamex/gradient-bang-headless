@@ -34,6 +34,10 @@ def _load_dotenv(path: Path) -> None:
             and value[0] in {"'", '"'}
         ):
             value = value[1:-1]
+        # Repo-root .env is the canonical local credential source for GB_* vars.
+        if key.startswith("GB_"):
+            os.environ[key] = value
+            continue
         os.environ.setdefault(key, value)
 
 

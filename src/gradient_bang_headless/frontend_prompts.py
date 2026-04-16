@@ -144,6 +144,15 @@ def build_corporation_ship_task_prompt(
     return f"Have my corporation ship {ship_ref} {normalized_task_description}"
 
 
+def build_corporation_ship_explore_task_description(*, new_sectors: int) -> str:
+    if new_sectors <= 0:
+        raise ValueError("new_sectors must be > 0")
+    return (
+        f"explore at least {new_sectors} new sectors from your current position, "
+        "then stop and report final sector and remaining warp"
+    )
+
+
 def build_collect_unowned_ship_prompt(*, ship_id: str) -> str:
     normalized_ship_id = ship_id.strip()
     if not normalized_ship_id:

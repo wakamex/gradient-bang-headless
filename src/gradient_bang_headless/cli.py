@@ -12,6 +12,7 @@ from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOp
 from .frontend_prompts import (
     build_buy_max_commodity_prompt,
     build_recharge_warp_prompt,
+    build_corporation_ship_explore_task_description,
     build_corporation_ship_purchase_prompt,
     build_corporation_ship_task_prompt,
     build_garrison_collect_prompt,
@@ -411,6 +412,19 @@ def build_parser() -> argparse.ArgumentParser:
     session_corp_task.add_argument("--task-description", required=True)
     session_corp_task.add_argument("--wait-for-finish", action="store_true")
     session_corp_task.add_argument("--event-timeout-seconds", type=float, default=60.0)
+
+    session_corp_explore_loop = sub.add_parser(
+        "session-corp-explore-loop",
+        help="Connect a session, send repeated frontier exploration tasks for a corporation ship, and stop on explicit targets",
+    )
+    _add_session_connect_args(session_corp_explore_loop)
+    session_corp_explore_loop.add_argument("--ship-name", required=True)
+    session_corp_explore_loop.add_argument("--ship-id")
+    session_corp_explore_loop.add_argument("--new-sectors-per-run", type=int, default=20)
+    session_corp_explore_loop.add_argument("--max-runs", type=int)
+    session_corp_explore_loop.add_argument("--target-known-sectors", type=int)
+    session_corp_explore_loop.add_argument("--target-corp-sectors", type=int)
+    session_corp_explore_loop.add_argument("--event-timeout-seconds", type=float, default=180.0)
 
     session_collect_unowned_ship = sub.add_parser(
         "session-collect-unowned-ship",
@@ -837,7 +851,7 @@ async def dispatch(args: argparse.Namespace) -> int:
 
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            await bridge.connect(_session_connect_options_from_args(args, config))
+            await _connect_session_bridge(bridge, args, config)
             status_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
             ships_result = await bridge.get_my_ships(timeout=args.event_timeout_seconds)
 
@@ -881,7 +895,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-connect":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            result = await bridge.connect(_session_connect_options_from_args(args, config))
+            result = await _connect_session_bridge(bridge, args, config)
             print(
                 dump_json(
                     {
@@ -895,7 +909,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-request":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             request_result = await bridge.send_client_request(
                 args.message_type,
                 _parse_json_object(args.data),
@@ -915,7 +929,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-message":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             send_result = await bridge.send_client_message(
                 args.message_type,
                 _parse_json_object(args.data),
@@ -936,7 +950,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-send-text":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             send_result = await bridge.send_text(args.content)
             if args.wait_seconds > 0:
                 await asyncio.sleep(args.wait_seconds)
@@ -954,7 +968,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-start":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.session_start(wait_seconds=args.wait_seconds)
             print(
                 dump_json(
@@ -970,7 +984,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-status":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
             print(
                 dump_json(
@@ -986,7 +1000,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-known-ports":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_known_ports(timeout=args.event_timeout_seconds)
             print(
                 dump_json(
@@ -1002,7 +1016,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-task-history":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_task_history(
                 ship_id=args.ship_id,
                 max_rows=args.max_rows,
@@ -1022,7 +1036,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-task-events":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_task_events(
                 args.task_id,
                 cursor=args.cursor,
@@ -1043,7 +1057,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-map":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_my_map(
                 center_sector=args.center_sector,
                 bounds=args.bounds,
@@ -1066,7 +1080,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-chat-history":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_chat_history(
                 since_hours=args.since_hours,
                 max_rows=args.max_rows,
@@ -1086,7 +1100,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-ships":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_my_ships(timeout=args.event_timeout_seconds)
             print(
                 dump_json(
@@ -1102,7 +1116,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-ship-definitions":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_ship_definitions(timeout=args.event_timeout_seconds)
             print(
                 dump_json(
@@ -1118,7 +1132,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-corporation":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.get_my_corporation(timeout=args.event_timeout_seconds)
             print(
                 dump_json(
@@ -1134,7 +1148,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-quest-status":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.wait_for_quest_status(timeout=args.event_timeout_seconds)
             print(
                 dump_json(
@@ -1150,7 +1164,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-assign-quest":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.assign_quest(
                 args.quest_code,
                 timeout=args.event_timeout_seconds,
@@ -1169,7 +1183,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-claim-reward":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.claim_step_reward(
                 quest_id=args.quest_id,
                 step_id=args.step_id,
@@ -1189,7 +1203,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-claim-all-rewards":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             initial_status = await bridge.wait_for_quest_status(timeout=args.event_timeout_seconds)
             initial_events = await bridge.drain_events()
             latest_quest_status = _last_quest_status_event(
@@ -1251,7 +1265,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-cancel-task":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.cancel_task(
                 args.task_id,
                 timeout=args.event_timeout_seconds,
@@ -1270,7 +1284,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-skip-tutorial":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.skip_tutorial(wait_seconds=args.wait_seconds)
             print(
                 dump_json(
@@ -1286,7 +1300,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-user-text":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 args.text,
                 wait_seconds=args.wait_seconds,
@@ -1305,7 +1319,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-player-task":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 args.task_description,
                 wait_seconds=0.0,
@@ -1332,7 +1346,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _recharge_warp_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 prompt,
                 wait_seconds=0.0,
@@ -1359,7 +1373,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _transfer_credits_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 prompt,
                 wait_seconds=0.0,
@@ -1385,7 +1399,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-trade-route-loop":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await _run_trade_route_loop(
                 bridge,
                 buy_sector=args.buy_sector,
@@ -1412,7 +1426,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _trade_order_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 prompt,
                 wait_seconds=args.wait_seconds,
@@ -1441,7 +1455,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _ship_purchase_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 prompt,
                 wait_seconds=args.wait_seconds,
@@ -1470,7 +1484,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _corporation_ship_purchase_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 prompt,
                 wait_seconds=args.wait_seconds,
@@ -1499,7 +1513,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _corporation_ship_task_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(prompt)
             watch_result = await _watch_corporation_task(
                 bridge,
@@ -1521,11 +1535,36 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             return 0
 
+    if args.command == "session-corp-explore-loop":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_corporation_explore_loop(
+                bridge,
+                ship_id=args.ship_id,
+                ship_name=args.ship_name,
+                new_sectors_per_run=args.new_sectors_per_run,
+                max_runs=args.max_runs,
+                target_known_sectors=args.target_known_sectors,
+                target_corp_sectors=args.target_corp_sectors,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "action": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
     if args.command == "session-collect-unowned-ship":
         prompt = _collect_unowned_ship_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(prompt)
             watch_result = await _wait_for_owned_ship(
                 bridge,
@@ -1549,7 +1588,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-salvage-collect":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.salvage_collect(
                 args.salvage_id,
                 timeout=args.event_timeout_seconds,
@@ -1569,7 +1608,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _engage_combat_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(prompt)
             watch_result = await _wait_for_first_combat_event(
                 bridge,
@@ -1591,7 +1630,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     if args.command == "session-combat-action":
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.combat_action(
                 combat_id=args.combat_id,
                 action=args.action,
@@ -1616,7 +1655,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _garrison_deploy_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 prompt,
                 wait_seconds=args.wait_seconds,
@@ -1645,7 +1684,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _garrison_collect_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(
                 prompt,
                 wait_seconds=args.wait_seconds,
@@ -1674,7 +1713,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _garrison_update_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(prompt)
             watch_result = await _wait_for_named_server_event(
                 bridge,
@@ -1698,7 +1737,7 @@ async def dispatch(args: argparse.Namespace) -> int:
         prompt = _ship_rename_prompt_from_args(args)
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             action_result = await bridge.user_text_input(prompt)
             watch_result = await _wait_for_status_ship_name(
                 bridge,
@@ -1724,7 +1763,7 @@ async def dispatch(args: argparse.Namespace) -> int:
             raise HeadlessBridgeError("session-watch", "--duration-seconds must be >= 0")
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             sent_result = None
             if args.message_type:
                 sent_result = await bridge.send_client_message(
@@ -1754,7 +1793,7 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
         async with HeadlessBridgeProcess(config) as bridge:
             await bridge.set_log_level(args.bridge_log_level)
-            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            connect_result = await _connect_session_bridge(bridge, args, config)
             runner = SessionLoopRunner(bridge)
             result = await runner.run(
                 SessionLoopOptions(
@@ -2086,6 +2125,76 @@ def _session_connect_options_from_args(
     )
 
 
+def _is_start_unauthorized_error(exc: HeadlessBridgeError) -> bool:
+    payload = exc.payload
+    if not isinstance(payload, dict):
+        return False
+    events = payload.get("events")
+    if not isinstance(events, list):
+        return False
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") != "http_request_completed":
+            continue
+        if event.get("status") != 401:
+            continue
+        url = event.get("url")
+        if isinstance(url, str) and url.rstrip("/").endswith("/functions/v1/start"):
+            return True
+    return False
+
+
+async def _refresh_session_access_token(config: HeadlessConfig) -> dict[str, Any]:
+    email = _require_text(None, config.email, "email", env_name="GB_EMAIL")
+    password = _require_text(None, config.password, "password", env_name="GB_PASSWORD")
+
+    async with HeadlessApiClient(config) as client:
+        login_result = await client.login(email, password)
+
+    session = login_result.get("session") if isinstance(login_result, dict) else None
+    access_token = session.get("access_token") if isinstance(session, dict) else None
+    refresh_token = session.get("refresh_token") if isinstance(session, dict) else None
+    if not isinstance(access_token, str) or not access_token:
+        raise HeadlessApiError(
+            "session-auth-refresh",
+            0,
+            "login did not return an access token",
+            payload=login_result,
+        )
+
+    config.access_token = access_token
+    config.refresh_token = refresh_token if isinstance(refresh_token, str) else None
+    update_dotenv(
+        {
+            "GB_ACCESS_TOKEN": access_token,
+            "GB_REFRESH_TOKEN": config.refresh_token,
+        }
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": config.refresh_token,
+        "login_result": login_result,
+    }
+
+
+async def _connect_session_bridge(
+    bridge: HeadlessBridgeProcess,
+    args: argparse.Namespace,
+    config: HeadlessConfig,
+) -> Any:
+    options = _session_connect_options_from_args(args, config)
+    try:
+        return await bridge.connect(options)
+    except HeadlessBridgeError as exc:
+        if args.access_token or not _is_start_unauthorized_error(exc):
+            raise
+        await _refresh_session_access_token(config)
+        refreshed_options = _session_connect_options_from_args(args, config)
+        return await bridge.connect(refreshed_options)
+
+
 def _loop_targets_from_args(args: argparse.Namespace) -> LoopTargets:
     return LoopTargets(
         credits=args.target_credits,
@@ -2227,6 +2336,7 @@ def _status_snapshot_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
 
+    player = payload.get("player")
     ship = payload.get("ship")
     sector = payload.get("sector")
     cargo = ship.get("cargo") if isinstance(ship, dict) else None
@@ -2239,12 +2349,27 @@ def _status_snapshot_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
             if isinstance(sector, dict) and isinstance(sector.get("port"), dict)
             else None
         ),
+        "port_is_mega": (
+            sector.get("port", {}).get("mega")
+            if isinstance(sector, dict) and isinstance(sector.get("port"), dict)
+            else None
+        ),
+        "port_prices": (
+            sector.get("port", {}).get("prices")
+            if isinstance(sector, dict) and isinstance(sector.get("port"), dict)
+            and isinstance(sector.get("port", {}).get("prices"), dict)
+            else {}
+        ),
         "ship_id": ship.get("ship_id") if isinstance(ship, dict) else None,
         "ship_name": ship.get("ship_name") if isinstance(ship, dict) else None,
         "ship_credits": ship.get("credits") if isinstance(ship, dict) else None,
         "warp_power": ship.get("warp_power") if isinstance(ship, dict) else None,
+        "current_task_id": ship.get("current_task_id") if isinstance(ship, dict) else None,
         "cargo": cargo_summary,
         "empty_holds": ship.get("empty_holds") if isinstance(ship, dict) else None,
+        "known_sectors": player.get("total_sectors_known") if isinstance(player, dict) else None,
+        "corp_sectors_visited": player.get("corp_sectors_visited") if isinstance(player, dict) else None,
+        "sectors_visited": player.get("sectors_visited") if isinstance(player, dict) else None,
     }
 
 
@@ -2302,6 +2427,9 @@ def _select_ship_from_ships_event(
 ) -> dict[str, Any] | None:
     if not isinstance(server_event, dict):
         return None
+    extracted = _extract_server_event(server_event)
+    if isinstance(extracted, dict):
+        server_event = extracted
     payload = server_event.get("payload")
     if not isinstance(payload, dict):
         return None
@@ -2326,6 +2454,9 @@ def _select_ship_from_corporation_event(
 ) -> dict[str, Any] | None:
     if not isinstance(server_event, dict):
         return None
+    extracted = _extract_server_event(server_event)
+    if isinstance(extracted, dict):
+        server_event = extracted
     payload = server_event.get("payload")
     if not isinstance(payload, dict):
         return None
@@ -2461,6 +2592,28 @@ async def _watch_corporation_task(
         result["quests"] = _quest_status_summary(latest_quest_status)
         result["latest_quest_status"] = latest_quest_status
     return result
+
+
+async def _fetch_owned_ship_snapshot(
+    bridge: HeadlessBridgeProcess,
+    *,
+    ship_id: str | None,
+    ship_name: str | None,
+    timeout: float,
+) -> dict[str, Any]:
+    result = await bridge.get_my_ships(timeout=timeout)
+    server_event = result.get("server_event")
+    ship = _select_ship_from_ships_event(server_event, ship_id=ship_id, ship_name=ship_name)
+    if ship is None:
+        raise HeadlessBridgeError(
+            "session-corp-explore-loop",
+            "ships.list did not include the requested ship",
+            payload=result,
+        )
+    return {
+        "result": result,
+        "ship": ship,
+    }
 
 
 async def _watch_player_task(
@@ -2600,9 +2753,38 @@ async def _run_validated_player_step(
 ) -> dict[str, Any]:
     attempts: list[dict[str, Any]] = []
     for attempt in range(max(0, retries) + 1):
-        result = await _run_player_task_prompt(bridge, prompt=prompt, timeout=timeout)
+        action_result = await bridge.user_text_input(prompt, wait_seconds=0.0)
+        watch_timeout = min(timeout, 20.0)
+        watch_result = await _watch_player_task(
+            bridge,
+            wait_for_finish=True,
+            timeout=watch_timeout,
+        )
+        deadline = asyncio.get_running_loop().time() + max(0.0, timeout - watch_timeout)
+        status_result = await _fetch_status_snapshot(bridge, timeout=min(timeout, 15.0))
+        status_polls: list[dict[str, Any]] = []
+        summary = status_result["summary"]
+
+        while not validate(summary):
+            current_task_id = summary.get("current_task_id")
+            if not current_task_id:
+                break
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(2.0, remaining))
+            status_result = await _fetch_status_snapshot(bridge, timeout=min(remaining, 15.0))
+            summary = status_result["summary"]
+            status_polls.append(status_result)
+
+        result = {
+            "prompt": prompt,
+            "result": action_result,
+            "watch": watch_result,
+            "status": status_result,
+            "status_polls": status_polls,
+        }
         attempts.append(result)
-        summary = result["status"]["summary"]
         if validate(summary):
             return {
                 "success": True,
@@ -2640,6 +2822,172 @@ def _total_cargo_units(summary: dict[str, Any]) -> int:
 def _status_warp(summary: dict[str, Any]) -> int | None:
     warp = summary.get("warp_power")
     return warp if isinstance(warp, int) else None
+
+
+def _port_price(summary: dict[str, Any], commodity: str) -> int | None:
+    port_prices = summary.get("port_prices")
+    if not isinstance(port_prices, dict):
+        return None
+    price = port_prices.get(commodity)
+    return int(price) if isinstance(price, int) else None
+
+
+def _build_route_buy_prompt(summary: dict[str, Any], commodity: str) -> str:
+    price = _port_price(summary, commodity)
+    empty_holds = summary.get("empty_holds")
+    credits = summary.get("ship_credits")
+    if isinstance(price, int) and price > 0 and isinstance(empty_holds, int) and empty_holds > 0 and isinstance(credits, int):
+        quantity = min(empty_holds, credits // price)
+        if quantity > 0:
+            return build_trade_order_prompt(
+                trade_type="BUY",
+                quantity=quantity,
+                commodity=commodity,
+                price_per_unit=price,
+            )
+    return build_buy_max_commodity_prompt(commodity=commodity)
+
+
+def _build_route_sell_prompt(summary: dict[str, Any], commodity: str) -> str:
+    price = _port_price(summary, commodity)
+    quantity = _cargo_units(summary, commodity)
+    if isinstance(price, int) and price >= 0 and quantity > 0:
+        return build_trade_order_prompt(
+            trade_type="SELL",
+            quantity=quantity,
+            commodity=commodity,
+            price_per_unit=price,
+        )
+    return build_sell_all_commodity_prompt(commodity=commodity)
+
+
+async def _run_corporation_explore_loop(
+    bridge: HeadlessBridgeProcess,
+    *,
+    ship_id: str | None,
+    ship_name: str,
+    new_sectors_per_run: int,
+    max_runs: int | None,
+    target_known_sectors: int | None,
+    target_corp_sectors: int | None,
+    timeout: float,
+) -> dict[str, Any]:
+    if new_sectors_per_run <= 0:
+        raise HeadlessBridgeError("session-corp-explore-loop", "--new-sectors-per-run must be > 0")
+    if max_runs is not None and max_runs <= 0:
+        raise HeadlessBridgeError("session-corp-explore-loop", "--max-runs must be > 0")
+    if target_known_sectors is not None and target_known_sectors <= 0:
+        raise HeadlessBridgeError("session-corp-explore-loop", "--target-known-sectors must be > 0")
+    if target_corp_sectors is not None and target_corp_sectors <= 0:
+        raise HeadlessBridgeError("session-corp-explore-loop", "--target-corp-sectors must be > 0")
+    if timeout <= 0:
+        raise HeadlessBridgeError("session-corp-explore-loop", "--event-timeout-seconds must be > 0")
+
+    task_description = build_corporation_ship_explore_task_description(new_sectors=new_sectors_per_run)
+    initial_status = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
+    initial_ship = await _fetch_owned_ship_snapshot(
+        bridge,
+        ship_id=ship_id,
+        ship_name=ship_name,
+        timeout=min(timeout, 30.0),
+    )
+    current_summary = initial_status["summary"]
+    current_ship = initial_ship["ship"]
+    runs: list[dict[str, Any]] = []
+    stop_reason = "not_started"
+
+    while True:
+        known_sectors = current_summary.get("known_sectors")
+        corp_sectors = current_summary.get("corp_sectors_visited")
+        if target_known_sectors is not None and isinstance(known_sectors, int) and known_sectors >= target_known_sectors:
+            stop_reason = "target_known_sectors_reached"
+            break
+        if target_corp_sectors is not None and isinstance(corp_sectors, int) and corp_sectors >= target_corp_sectors:
+            stop_reason = "target_corp_sectors_reached"
+            break
+        if max_runs is not None and len(runs) >= max_runs:
+            stop_reason = "max_runs_reached"
+            break
+
+        prompt = build_corporation_ship_task_prompt(
+            ship_name=ship_name,
+            ship_id=ship_id,
+            task_description=task_description,
+        )
+        action_result = await bridge.user_text_input(prompt)
+        watch_result = await _watch_corporation_task(
+            bridge,
+            ship_id=ship_id,
+            ship_name=ship_name,
+            wait_for_finish=True,
+            timeout=timeout,
+        )
+        status_result = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
+        ship_result = await _fetch_owned_ship_snapshot(
+            bridge,
+            ship_id=ship_id,
+            ship_name=ship_name,
+            timeout=min(timeout, 30.0),
+        )
+        next_summary = status_result["summary"]
+        next_ship = ship_result["ship"]
+        run_summary = {
+            "prompt": prompt,
+            "result": action_result,
+            "watch": watch_result,
+            "status": status_result,
+            "ship": ship_result,
+            "start_sector": current_ship.get("sector"),
+            "end_sector": next_ship.get("sector"),
+            "delta_known_sectors": (
+                next_summary.get("known_sectors") - current_summary.get("known_sectors")
+                if isinstance(next_summary.get("known_sectors"), int)
+                and isinstance(current_summary.get("known_sectors"), int)
+                else None
+            ),
+            "delta_corp_sectors": (
+                next_summary.get("corp_sectors_visited") - current_summary.get("corp_sectors_visited")
+                if isinstance(next_summary.get("corp_sectors_visited"), int)
+                and isinstance(current_summary.get("corp_sectors_visited"), int)
+                else None
+            ),
+        }
+        progress_observed = (
+            run_summary["end_sector"] != run_summary["start_sector"]
+            or run_summary["delta_known_sectors"] not in {None, 0}
+            or run_summary["delta_corp_sectors"] not in {None, 0}
+        )
+        run_summary["progress_observed"] = progress_observed
+        run_summary["task_completion_inferred"] = bool(progress_observed and not watch_result.get("task_finished"))
+        runs.append(run_summary)
+        current_summary = next_summary
+        current_ship = next_ship
+
+        if not watch_result.get("task_finished") and not progress_observed:
+            stop_reason = watch_result.get("stop_reason") or "task_not_finished"
+            break
+        if current_ship.get("destroyed_at") is not None:
+            stop_reason = "ship_destroyed"
+            break
+        if (
+            run_summary["end_sector"] == run_summary["start_sector"]
+            and run_summary["delta_known_sectors"] in {None, 0}
+            and run_summary["delta_corp_sectors"] in {None, 0}
+        ):
+            stop_reason = "no_progress"
+            break
+
+    return {
+        "stop_reason": stop_reason,
+        "task_description": task_description,
+        "initial_status": initial_status,
+        "initial_ship": initial_ship,
+        "runs": runs,
+        "final_status": {
+            "summary": current_summary,
+        },
+        "final_ship": current_ship,
+    }
 
 
 async def _run_trade_route_loop(
@@ -2713,7 +3061,7 @@ async def _run_trade_route_loop(
                     current_summary = after_move
                     break
                 current_summary = after_move
-            sell_prompt = build_sell_all_commodity_prompt(commodity=commodity)
+            sell_prompt = _build_route_sell_prompt(current_summary, commodity)
             sell_outcome = await _run_validated_player_step(
                 bridge,
                 prompt=sell_prompt,
@@ -2773,7 +3121,7 @@ async def _run_trade_route_loop(
                 break
             current_summary = after_move_to_buy
 
-        buy_prompt = build_buy_max_commodity_prompt(commodity=commodity)
+        buy_prompt = _build_route_buy_prompt(current_summary, commodity)
         buy_outcome = await _run_validated_player_step(
             bridge,
             prompt=buy_prompt,
@@ -2825,7 +3173,7 @@ async def _run_trade_route_loop(
             break
         current_summary = after_move_to_sell
 
-        sell_prompt = build_sell_all_commodity_prompt(commodity=commodity)
+        sell_prompt = _build_route_sell_prompt(current_summary, commodity)
         sell_outcome = await _run_validated_player_step(
             bridge,
             prompt=sell_prompt,
