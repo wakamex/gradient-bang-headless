@@ -307,6 +307,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     session_frontier_candidates.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
+    session_probe_frontier_loop = sub.add_parser(
+        "session-probe-frontier-loop",
+        help="Connect a session, find the best validated frontier branch, move a probe there, and run one bounded exploration pass per branch",
+    )
+    _add_session_connect_args(session_probe_frontier_loop)
+    session_probe_frontier_loop.add_argument("--ship-name", required=True)
+    session_probe_frontier_loop.add_argument("--ship-id")
+    session_probe_frontier_loop.add_argument("--search-center-sector", type=int)
+    session_probe_frontier_loop.add_argument("--candidate-limit", type=int, default=12)
+    session_probe_frontier_loop.add_argument("--max-hops", type=int, default=10)
+    session_probe_frontier_loop.add_argument("--max-sectors", type=int, default=2000)
+    session_probe_frontier_loop.add_argument("--validate-limit", type=int, default=12)
+    session_probe_frontier_loop.add_argument("--max-frontiers", type=int, default=3)
+    session_probe_frontier_loop.add_argument("--new-sectors-per-run", type=int, default=10)
+    session_probe_frontier_loop.add_argument("--event-timeout-seconds", type=float, default=180.0)
+
     session_chat_history = sub.add_parser(
         "session-chat-history",
         help="Connect a session, request chat history, and wait for chat.history",
@@ -1471,6 +1487,34 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "summary": summary,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-probe-frontier-loop":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await _connect_session_bridge(bridge, args, config)
+            action_result = await _run_probe_frontier_loop(
+                bridge,
+                ship_id=args.ship_id,
+                ship_name=args.ship_name,
+                search_center_sector=args.search_center_sector,
+                candidate_limit=args.candidate_limit,
+                max_hops=args.max_hops,
+                max_sectors=args.max_sectors,
+                validate_limit=args.validate_limit,
+                max_frontiers=args.max_frontiers,
+                new_sectors_per_run=args.new_sectors_per_run,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "result": action_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -4637,6 +4681,210 @@ async def _validate_frontier_candidates(
         "method": "probe stub sectors with local_map_region; a center-sector error implies the stub is not yet visited",
     }
     return summary
+
+
+def _actionable_frontier_candidates(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = summary.get("candidates")
+    if not isinstance(candidates, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if (
+            _coerce_int(candidate.get("validated_unvisited_stub_count")) <= 0
+            and _coerce_int(candidate.get("unvisited_neighbor_count")) <= 0
+            and _coerce_int(candidate.get("immediate_discovery")) <= 0
+        ):
+            continue
+        rows.append(candidate)
+    return rows
+
+
+async def _run_probe_frontier_loop(
+    bridge: HeadlessBridgeProcess,
+    *,
+    ship_id: str | None,
+    ship_name: str,
+    search_center_sector: int | None,
+    candidate_limit: int,
+    max_hops: int,
+    max_sectors: int,
+    validate_limit: int,
+    max_frontiers: int,
+    new_sectors_per_run: int,
+    timeout: float,
+) -> dict[str, Any]:
+    if candidate_limit <= 0:
+        raise HeadlessBridgeError("session-probe-frontier-loop", "--candidate-limit must be > 0")
+    if max_hops <= 0:
+        raise HeadlessBridgeError("session-probe-frontier-loop", "--max-hops must be > 0")
+    if max_sectors <= 0:
+        raise HeadlessBridgeError("session-probe-frontier-loop", "--max-sectors must be > 0")
+    if validate_limit < 0:
+        raise HeadlessBridgeError("session-probe-frontier-loop", "--validate-limit must be >= 0")
+    if max_frontiers <= 0:
+        raise HeadlessBridgeError("session-probe-frontier-loop", "--max-frontiers must be > 0")
+    if new_sectors_per_run <= 0:
+        raise HeadlessBridgeError("session-probe-frontier-loop", "--new-sectors-per-run must be > 0")
+    if timeout <= 0:
+        raise HeadlessBridgeError("session-probe-frontier-loop", "--event-timeout-seconds must be > 0")
+
+    initial_status = await _fetch_status_snapshot(bridge, timeout=min(timeout, 30.0))
+    focus_ship_result = await _fetch_owned_ship_snapshot(
+        bridge,
+        ship_id=ship_id,
+        ship_name=ship_name,
+        timeout=min(timeout, 30.0),
+    )
+    focus_ship = focus_ship_result["ship"]
+
+    origin_sector = search_center_sector or 0
+    if origin_sector <= 0:
+        origin_sector = _coerce_int(initial_status["summary"].get("sector_id"))
+    if origin_sector <= 0:
+        raise HeadlessBridgeError(
+            "session-probe-frontier-loop",
+            "could not determine a search center sector",
+        )
+
+    ship_sector = _coerce_int(focus_ship.get("sector")) or _coerce_int(focus_ship.get("sector_id"))
+    search_centers: list[int] = []
+    for center in (ship_sector, origin_sector):
+        if center > 0 and center not in search_centers:
+            search_centers.append(center)
+
+    frontier_summary = None
+    frontier_candidates: list[dict[str, Any]] = []
+    search_attempts: list[dict[str, Any]] = []
+    for center_sector in search_centers:
+        map_result = await bridge.get_my_map(
+            center_sector=center_sector,
+            max_hops=max_hops,
+            max_sectors=max_sectors,
+            timeout=min(timeout, 60.0),
+        )
+        candidate_summary = _rank_frontier_candidates(
+            origin_sector=center_sector,
+            map_result=map_result,
+            focus_ship=focus_ship,
+            limit=candidate_limit,
+        )
+        if validate_limit > 0:
+            candidate_summary = await _validate_frontier_candidates(
+                bridge,
+                summary=candidate_summary,
+                validate_limit=validate_limit,
+                timeout=timeout,
+            )
+        actionable = _actionable_frontier_candidates(candidate_summary)
+        search_attempts.append(
+            {
+                "center_sector": center_sector,
+                "map_sector_count": candidate_summary.get("map_sector_count"),
+                "frontier_sector_count": candidate_summary.get("frontier_sector_count"),
+                "actionable_candidate_count": len(actionable),
+                "recommended": candidate_summary.get("recommended"),
+            }
+        )
+        if actionable:
+            frontier_summary = candidate_summary
+            frontier_candidates = actionable
+            origin_sector = center_sector
+            break
+
+    if frontier_summary is None:
+        frontier_summary = {
+            "origin_sector": origin_sector,
+            "candidates": [],
+        }
+    attempts: list[dict[str, Any]] = []
+    final_status = {"summary": initial_status["summary"]}
+    final_ship = focus_ship
+
+    if not frontier_candidates:
+        return {
+            "stop_reason": "no_actionable_frontier",
+            "search_center_sector": origin_sector,
+            "search_attempts": search_attempts,
+            "initial_status": initial_status,
+            "initial_ship": focus_ship_result,
+            "frontier_summary": frontier_summary,
+            "attempts": attempts,
+            "final_status": final_status,
+            "final_ship": final_ship,
+        }
+
+    stop_reason = "max_frontiers_exhausted"
+    selected_frontiers = frontier_candidates[:max_frontiers]
+    for frontier_candidate in selected_frontiers:
+        explore_result = await _run_corporation_explore_loop(
+            bridge,
+            ship_id=ship_id,
+            ship_name=ship_name,
+            start_sector=_coerce_int(frontier_candidate.get("sector_id")) or None,
+            new_sectors_per_run=new_sectors_per_run,
+            max_runs=1,
+            target_known_sectors=None,
+            target_corp_sectors=None,
+            timeout=timeout,
+        )
+        attempt_final_status = explore_result.get("final_status")
+        attempt_final_summary = (
+            attempt_final_status.get("summary")
+            if isinstance(attempt_final_status, dict) and isinstance(attempt_final_status.get("summary"), dict)
+            else {}
+        )
+        final_status = {"summary": attempt_final_summary} if attempt_final_summary else final_status
+        attempt_final_ship = explore_result.get("final_ship")
+        if isinstance(attempt_final_ship, dict):
+            final_ship = attempt_final_ship
+        delta_known = None
+        delta_corp = None
+        if isinstance(attempt_final_summary.get("known_sectors"), int) and isinstance(
+            initial_status["summary"].get("known_sectors"), int
+        ):
+            delta_known = attempt_final_summary["known_sectors"] - initial_status["summary"]["known_sectors"]
+        if isinstance(attempt_final_summary.get("corp_sectors_visited"), int) and isinstance(
+            initial_status["summary"].get("corp_sectors_visited"), int
+        ):
+            delta_corp = (
+                attempt_final_summary["corp_sectors_visited"]
+                - initial_status["summary"]["corp_sectors_visited"]
+            )
+        branch_progress = any(
+            (
+                isinstance(run, dict)
+                and (
+                    _coerce_int(run.get("delta_known_sectors")) > 0
+                    or _coerce_int(run.get("delta_corp_sectors")) > 0
+                )
+            )
+            for run in (explore_result.get("runs") if isinstance(explore_result.get("runs"), list) else [])
+        )
+        attempt = {
+            "frontier_candidate": frontier_candidate,
+            "explore_result": explore_result,
+            "delta_known_sectors_total": delta_known,
+            "delta_corp_sectors_total": delta_corp,
+            "branch_progress": branch_progress or _coerce_int(delta_known) > 0 or _coerce_int(delta_corp) > 0,
+        }
+        attempts.append(attempt)
+        if attempt["branch_progress"]:
+            stop_reason = "frontier_progress"
+            break
+
+    return {
+        "stop_reason": stop_reason,
+        "search_center_sector": origin_sector,
+        "search_attempts": search_attempts,
+        "initial_status": initial_status,
+        "initial_ship": focus_ship_result,
+        "frontier_summary": frontier_summary,
+        "attempts": attempts,
+        "final_status": final_status,
+        "final_ship": final_ship,
+    }
 
 
 def _rank_trade_opportunities(

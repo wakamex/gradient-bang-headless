@@ -32,6 +32,7 @@ This scaffold supports:
 - exact frontend prompt contracts for trade orders and ship purchase requests
 - first-class logistics helpers for warp recharge, credit transfer, and bidirectional warp transfer
 - a first-class `session-corp-explore-loop` for repeated probe frontier runs
+- a first-class `session-probe-frontier-loop` for probe-first frontier selection, validation, and one bounded exploration branch
 - a deterministic `session-trade-route-loop` for repeatable personal trading
 - a reusable `loop` runner for long bot-driven objectives with state polling and reprompts
 - a bridge into `upstream/` so trusted tooling can reuse `gradientbang.utils.supabase_client.AsyncGameClient`
@@ -179,6 +180,12 @@ gb-headless session-corp-explore-loop \
   --ship-id eab4cd \
   --new-sectors-per-run 20 \
   --max-runs 3
+gb-headless session-probe-frontier-loop \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --ship-name "gbheadless Auto Probe I" \
+  --max-frontiers 1 \
+  --new-sectors-per-run 10
 gb-headless session-collect-unowned-ship \
   --character-id "$GB_CHARACTER_ID" \
   --access-token "$GB_ACCESS_TOKEN" \

@@ -11,28 +11,28 @@ in the live Gradient Bang production game.
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `1808`
-- Personal ship credits: `9,369`
-- Personal ship cargo: `30` `RO`
-- Personal ship warp: `197/500`
+- Personal ship sector: `256`
+- Personal ship credits: `10,809`
+- Personal ship cargo: empty
+- Personal ship warp: `164/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
   - `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-  - `gbheadless Auto Probe I` (`autonomous_probe`) in sector `3883` with `404/500` warp after the latest frontier scan
+  - `gbheadless Auto Probe I` (`autonomous_probe`) in sector `790` with `368/500` warp after the latest successful frontier branch
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
 - Visible leaderboard status:
-  - exploration: on the visible board at `344` known sectors, currently observed at rank `34`
-  - wealth: on the visible board, currently observed at rank `64` with visible row value `45,969`
-  - trading: on the visible board, currently observed at rank `27` with `271,312` total trade volume across `321` trades
+  - exploration: on the visible board at `364` known sectors, currently observed at rank `32`
+  - wealth: on the visible board, currently observed at rank `66` with visible row value `44,409`
+  - trading: on the visible board, currently observed at rank `27` with `290,872` total trade volume across `322` trades
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
 - Current frontier:
   - keep all three leaderboard categories visible while climbing deeper into each board
-  - use validated frontier selection plus repeated corporation-probe frontier loops as the primary exploration engine
+  - use probe-first validated frontier selection plus repeated `session-probe-frontier-loop` runs as the primary exploration engine
   - use port-code-aware, map-backed route selection instead of naive price comparisons
   - use `session-auto-trade-loop --goal wealth` for the best visible profit-per-hop route and `--goal trading` for the best visible volume-per-hop route, but only after validating that the route is legal under port `B`/`S` directionality
-  - use `session-wealth-loadout` when the ship is parked on a cheap legal seller and the immediate goal is wealth-board rank instead of realized profit
+  - treat wealth-padding helpers as provisional until they are re-proven on the current live route state
   - use `session-load-cargo` when the next step is to buy a specific commodity at the current port; it now respects live price, credits, capacity, and stock
   - keep trading loops short and observable; the best current combined wealth/trading shuttle is the exact `1808 <-> 256` `RO/QF` cycle, but the `QF` side can stock out and temporarily cap the route
   - use exact move-and-trade prompt contracts once the ship is on a valid port; invalid trade routes can silently stall even when the quoted price looks profitable
@@ -40,7 +40,7 @@ in the live Gradient Bang production game.
   - prefer fresh `1000`-credit autonomous probes over long rescue chains when the goal is exploration rank
   - treat raw dangling map stubs as heuristics only; validate them before using them as exploration targets
   - treat the local `3883` probe pocket as saturated unless a future validated scan says otherwise
-  - the next confirmed exploration branch is `4790 -> 4407`
+  - the first recent confirmed local branch was `2015 -> [18, 422, 1767]`, and the probe-first loop is now the preferred way to find the next one
   - keep compounding toward the first meaningful personal ship upgrade beyond the `Kestrel Courier`, but accept that the personal ship is now being used as a rotating wealth/trading shuttle around sectors `1808` and `256`
   - keep trade loops chunked and observable; large blind route batches are productive but still too opaque to count as a clean bounded surface
 
@@ -257,6 +257,54 @@ in the live Gradient Bang production game.
   - wealth still lags because it follows realized profits and visible assets, so it remains the slowest board for now
 
 ### Live Route Ranking And Split Strategy
+
+### Probe-First Frontier Loop
+
+- Reworked the exploration strategy around long-term ROI instead of quick
+  leaderboard nudges.
+- Pinned bridge-backed map reads to `map.region` so repeated frontier scans
+  stop racing `map.local` and returning inconsistent local topology.
+- Added `session-probe-frontier-loop` as the durable exploration surface:
+  - search from the probe's current sector first
+  - rank frontier anchors
+  - treat immediate local unvisited neighbors as actionable frontier
+  - run one bounded exploration branch and verify whether map state actually
+    advanced
+- The first production-proof run selected frontier anchor `2015` with local
+  unvisited neighbors `[18, 422, 1767]`.
+- That run completed cleanly and produced:
+  - `+10` known sectors
+  - `+10` corporation sectors
+  - final probe sector `790`
+  - final probe warp `368/500`
+- That pushed the exploration board from `344` to `364`, improving the visible
+  rank from `34` to `32`.
+- This is the clearest compounding loop the client has now. It directly grows
+  the exploration board and also improves later trade discovery by revealing
+  more ports and more legal routes.
+
+### Post-Exploration Trading Cleanup
+
+- After the exploration run, the player ship was in a clean position to take an
+  exact trading step instead of a broad loop.
+- Sold `30` `Neuro Symbolics` at sector `256` for `41` per unit through the
+  exact trade-order surface.
+- That raised personal credits to `10,809` and trading volume to `290,872`.
+- Trading rank held at `27`, but the gap upward narrowed.
+- Wealth dropped after liquidation to `44,409`, which confirms the current
+  wealth problem: cargo padding is temporary, and the existing
+  `session-wealth-loadout` helper should not be treated as a primary engine
+  until it is re-proven on the current route state.
+
+### Current Strategic Read
+
+- Exploration is the highest-ROI lever now.
+- Exact trading remains the second-best lever, but only in short bounded
+  batches.
+- Wealth is no longer the thing to optimize directly unless a verified
+  low-friction padding opportunity appears.
+- The client is finally starting to behave like a compounding strategy tool
+  instead of a bundle of isolated probes and prompts.
 
 - Added a first-class `session-trade-opportunities` command so the client can rank the current known-port graph instead of relying on one remembered grind route.
 - On the live graph from sector `3246`, the best visible routes split by goal:

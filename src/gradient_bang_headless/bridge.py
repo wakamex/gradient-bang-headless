@@ -360,7 +360,7 @@ class HeadlessBridgeProcess:
         return await self.send_client_message_waiting(
             "get-my-map",
             data=payload,
-            expected_server_events={"map.region", "map.local"},
+            expected_server_events="map.region",
             timeout=timeout,
         )
 

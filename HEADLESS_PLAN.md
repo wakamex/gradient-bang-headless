@@ -24,15 +24,16 @@ The intent is not just to scaffold code, but to keep a running record of:
 5. Keep extending post-tutorial live-player surfaces from the website:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
 6. Keep the current leaderboard climb strategy explicit:
-   - exploration through validated `session-frontier-candidates` selection,
-     then repeated `session-corp-explore-loop` runs from confirmed branches
+   - exploration through probe-first validated frontier selection, then
+     repeated `session-probe-frontier-loop` runs from actionable local probe
+     branches
    - trading through short exact-order or single-route batches on the current
      best visible profit route, with `session-liquidate-cargo` used to reset
      stranded holds cleanly and `session-load-cargo` used to restock the exact
      intended commodity at the current port
    - wealth through realized short-profit cycles first, with
-     `session-wealth-loadout` used as the fast board-padding helper when the
-     ship is already parked on a cheap seller
+     wealth-padding helpers used only after they are re-verified against the
+     current live port state
    - treat live stock as a first-class route constraint; the best visible route
      is only as good as the commodity quantity actually available today
    - medium-term capital target: a better personal trading ship, with extra corp probes as the next exploration multiplier at the next megaport stop
@@ -162,6 +163,8 @@ Implemented:
 - a first-class `session-frontier-candidates` helper for ranking local
   frontier anchors and validating which dangling map stubs are genuinely
   unvisited
+- a first-class `session-probe-frontier-loop` that searches from the probe,
+  picks an actionable frontier branch, and executes one bounded exploration run
 - a first-class `session-trade-opportunities` helper for ranking visible trade routes by profit and travel cost
 - map-backed route ranking using the live `session-map` graph instead of hop-delta approximations
 - a first-class `session-auto-trade-loop` that chooses a route by goal and runs it
@@ -228,9 +231,9 @@ Current blocker:
   - `corporation.data` can lag behind `ships.list` after a successful
     corporation-ship task, so post-task verification should prefer `ships.list`
     when sector freshness matters
-  - the next exploration automation step is a full `session-probe-frontier-loop`
-    that picks, validates, and executes frontier branches without manual
-    handoff
+  - wealth padding is currently weaker than exploration and exact trade
+    batches; `session-wealth-loadout` should be treated as provisional until it
+    is re-proven on the current live route state
 
 ### Current Live State
 
@@ -239,22 +242,22 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `1808`
-- personal ship credits: `9369`
-- personal ship warp power: `197`
+- personal ship sector: `256`
+- personal ship credits: `10809`
+- personal ship warp power: `164`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `3883` with `404/500` warp after the latest validated frontier scan
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `790` with `368/500` warp after the latest successful probe-frontier run
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
-- cargo: `30` `retro_organics`
+- cargo: empty
 - fighters: `300`
-- known sectors: `344`
-- corporation sectors visited: `338`
+- known sectors: `364`
+- corporation sectors visited: `358`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `344` known sectors, currently observed at rank `34`
-- visible trading board entry: `271312` total volume, currently observed at rank `27`
-- visible wealth board entry: currently observed at rank `64` with visible row value `45969`
+- visible exploration board entry: `364` known sectors, currently observed at rank `32`
+- visible trading board entry: `290872` total volume, currently observed at rank `27`
+- visible wealth board entry: currently observed at rank `66` with visible row value `44409`
 
 Latest live progression proved:
 
@@ -296,6 +299,22 @@ Latest live progression proved:
     candidates
   - the first confirmed player-visible frontier branch is `4790 -> 4407`
     after validating that `4407` is not yet centerable
+- pinned bridge-backed map reads to `map.region` so repeated local frontier
+  scans stop racing `map.local`
+- added `session-probe-frontier-loop`, then proved the probe-first strategy
+  live:
+  - searched from the active probe sector instead of the player sector
+  - selected frontier anchor `2015` with actionable unvisited neighbors
+    `[18, 422, 1767]`
+  - completed one bounded branch run with `+10` known sectors and `+10`
+    corporation sectors
+  - finished the run with `gbheadless Auto Probe I` in sector `790`
+- used the cleaner post-exploration player state to exact-sell `30`
+  `neuro_symbolics` at sector `256`, raising credits to `10809` and trading
+  volume to `290872`
+- confirmed that wealth fell after liquidation and that the current
+  `session-wealth-loadout` path should not be treated as the primary ROI play
+  until it is re-proven on the new route state
 - pushed the corporation probe through a 29-sector exploration run that
   entered the visible exploration board at `54` sectors
 - mapped the current best live trade ladder by capital band:
