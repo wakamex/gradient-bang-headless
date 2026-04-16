@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 from collections import deque
@@ -322,6 +323,25 @@ def build_parser() -> argparse.ArgumentParser:
     session_probe_frontier_loop.add_argument("--max-frontiers", type=int, default=3)
     session_probe_frontier_loop.add_argument("--new-sectors-per-run", type=int, default=10)
     session_probe_frontier_loop.add_argument("--event-timeout-seconds", type=float, default=180.0)
+
+    session_probe_fleet_loop = sub.add_parser(
+        "session-probe-fleet-loop",
+        help="Connect once, select eligible corporation probes, then run one probe-frontier worker subprocess per ship",
+    )
+    _add_session_connect_args(session_probe_fleet_loop)
+    session_probe_fleet_loop.add_argument("--ship-name", action="append", dest="ship_names", default=[])
+    session_probe_fleet_loop.add_argument("--ship-id", action="append", dest="ship_ids", default=[])
+    session_probe_fleet_loop.add_argument("--search-center-sector", type=int)
+    session_probe_fleet_loop.add_argument("--candidate-limit", type=int, default=12)
+    session_probe_fleet_loop.add_argument("--max-hops", type=int, default=10)
+    session_probe_fleet_loop.add_argument("--max-sectors", type=int, default=2000)
+    session_probe_fleet_loop.add_argument("--validate-limit", type=int, default=12)
+    session_probe_fleet_loop.add_argument("--max-frontiers", type=int, default=1)
+    session_probe_fleet_loop.add_argument("--new-sectors-per-run", type=int, default=10)
+    session_probe_fleet_loop.add_argument("--min-probe-warp", type=int, default=1)
+    session_probe_fleet_loop.add_argument("--parallelism", type=int, default=4)
+    session_probe_fleet_loop.add_argument("--max-probes", type=int)
+    session_probe_fleet_loop.add_argument("--event-timeout-seconds", type=float, default=180.0)
 
     session_chat_history = sub.add_parser(
         "session-chat-history",
@@ -1520,6 +1540,11 @@ async def dispatch(args: argparse.Namespace) -> int:
                 )
             )
             return 0
+
+    if args.command == "session-probe-fleet-loop":
+        result = await _run_probe_fleet_loop(args, config)
+        print(dump_json(result))
+        return 0
 
     if args.command == "session-chat-history":
         async with HeadlessBridgeProcess(config) as bridge:
@@ -4699,6 +4724,306 @@ def _actionable_frontier_candidates(summary: dict[str, Any]) -> list[dict[str, A
             continue
         rows.append(candidate)
     return rows
+
+
+def _probe_ship_summary(ship: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ship_id": ship.get("ship_id"),
+        "ship_name": ship.get("ship_name"),
+        "ship_type": ship.get("ship_type"),
+        "owner_type": ship.get("owner_type"),
+        "sector": _coerce_int(ship.get("sector")),
+        "warp_power": _coerce_int(ship.get("warp_power")),
+        "current_task_id": ship.get("current_task_id"),
+        "destroyed_at": ship.get("destroyed_at"),
+    }
+
+
+def _ship_matches_probe_filters(
+    ship: dict[str, Any],
+    *,
+    ship_ids: list[str],
+    ship_names: list[str],
+) -> bool:
+    if not ship_ids and not ship_names:
+        return True
+    for ship_id in ship_ids:
+        if ship_id and _matches_identifier(ship.get("ship_id"), ship_id):
+            return True
+    for ship_name in ship_names:
+        if ship_name and _normalize_compare_text(ship.get("ship_name")) == _normalize_compare_text(ship_name):
+            return True
+    return False
+
+
+def _classify_probe_fleet(
+    ships_result: dict[str, Any],
+    *,
+    ship_ids: list[str],
+    ship_names: list[str],
+    min_probe_warp: int,
+) -> dict[str, Any]:
+    payload = _extract_bridge_payload(ships_result)
+    ships = payload.get("ships")
+    if not isinstance(ships, list):
+        return {
+            "eligible_probes": [],
+            "skipped": [],
+        }
+
+    eligible: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for raw_ship in ships:
+        if not isinstance(raw_ship, dict):
+            continue
+        ship = _probe_ship_summary(raw_ship)
+        reason = None
+        if ship.get("destroyed_at") is not None:
+            reason = "destroyed"
+        elif ship.get("owner_type") != "corporation":
+            reason = "not_corporation_owned"
+        elif ship.get("ship_type") != "autonomous_probe":
+            reason = "not_probe"
+        elif not _ship_matches_probe_filters(raw_ship, ship_ids=ship_ids, ship_names=ship_names):
+            reason = "filtered_out"
+        elif ship.get("current_task_id"):
+            reason = "busy"
+        elif _coerce_int(ship.get("warp_power")) < min_probe_warp:
+            reason = "insufficient_warp"
+
+        if reason is None:
+            eligible.append(ship)
+        else:
+            skipped.append({**ship, "reason": reason})
+
+    eligible.sort(
+        key=lambda ship: (
+            -_coerce_int(ship.get("warp_power")),
+            _normalize_compare_text(ship.get("ship_name")),
+        )
+    )
+    return {
+        "eligible_probes": eligible,
+        "skipped": skipped,
+    }
+
+
+def _probe_fleet_worker_env(args: argparse.Namespace, config: HeadlessConfig) -> dict[str, str]:
+    env = os.environ.copy()
+    src_path = str(repo_root() / "src")
+    current_pythonpath = env.get("PYTHONPATH", "")
+    pythonpath_parts = [part for part in current_pythonpath.split(os.pathsep) if part]
+    if src_path not in pythonpath_parts:
+        pythonpath_parts.insert(0, src_path)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    env["GB_FUNCTIONS_URL"] = config.functions_url
+    access_token = getattr(args, "access_token", None) or config.access_token
+    if isinstance(access_token, str) and access_token:
+        env["GB_ACCESS_TOKEN"] = access_token
+    character_id = getattr(args, "character_id", None) or config.character_id
+    if isinstance(character_id, str) and character_id:
+        env["GB_CHARACTER_ID"] = character_id
+    if isinstance(config.node_binary, str) and config.node_binary:
+        env["GB_NODE_BINARY"] = config.node_binary
+    if isinstance(config.bridge_dir, str) and config.bridge_dir:
+        env["GB_BRIDGE_DIR"] = config.bridge_dir
+    return env
+
+
+def _probe_frontier_worker_command(
+    args: argparse.Namespace,
+    *,
+    ship: dict[str, Any],
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "gradient_bang_headless.cli",
+        "session-probe-frontier-loop",
+        "--transport",
+        args.transport,
+        "--ship-name",
+        str(ship.get("ship_name") or ""),
+        "--ship-id",
+        str(ship.get("ship_id") or ""),
+        "--connect-timeout-ms",
+        str(args.connect_timeout_ms),
+        "--request-timeout-ms",
+        str(args.request_timeout_ms),
+        "--bridge-log-level",
+        args.bridge_log_level,
+        "--candidate-limit",
+        str(args.candidate_limit),
+        "--max-hops",
+        str(args.max_hops),
+        "--max-sectors",
+        str(args.max_sectors),
+        "--validate-limit",
+        str(args.validate_limit),
+        "--max-frontiers",
+        str(args.max_frontiers),
+        "--new-sectors-per-run",
+        str(args.new_sectors_per_run),
+        "--event-timeout-seconds",
+        str(args.event_timeout_seconds),
+    ]
+    if getattr(args, "access_token", None):
+        command.extend(["--access-token", args.access_token])
+    if getattr(args, "character_id", None):
+        command.extend(["--character-id", args.character_id])
+    if getattr(args, "functions_url", None):
+        command.extend(["--functions-url", args.functions_url])
+    if getattr(args, "search_center_sector", None):
+        command.extend(["--search-center-sector", str(args.search_center_sector)])
+    if getattr(args, "bypass_tutorial", False):
+        command.append("--bypass-tutorial")
+    if getattr(args, "voice_id", None):
+        command.extend(["--voice-id", args.voice_id])
+    if getattr(args, "personality_tone", None):
+        command.extend(["--personality-tone", args.personality_tone])
+    if getattr(args, "character_name", None):
+        command.extend(["--character-name", args.character_name])
+    return command
+
+
+def _summarize_probe_frontier_worker_output(result: dict[str, Any]) -> dict[str, Any]:
+    worker_result = result.get("result")
+    if not isinstance(worker_result, dict):
+        return {}
+    attempts = worker_result.get("attempts")
+    total_known = 0
+    total_corp = 0
+    if isinstance(attempts, list):
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            total_known += _coerce_int(attempt.get("delta_known_sectors_total"))
+            total_corp += _coerce_int(attempt.get("delta_corp_sectors_total"))
+    final_ship = worker_result.get("final_ship") if isinstance(worker_result.get("final_ship"), dict) else {}
+    final_status = worker_result.get("final_status") if isinstance(worker_result.get("final_status"), dict) else {}
+    final_summary = final_status.get("summary") if isinstance(final_status.get("summary"), dict) else {}
+    return {
+        "stop_reason": worker_result.get("stop_reason"),
+        "delta_known_sectors_total": total_known,
+        "delta_corp_sectors_total": total_corp,
+        "final_probe_sector": _coerce_int(final_ship.get("sector")),
+        "final_probe_warp": _coerce_int(final_ship.get("warp_power")),
+        "known_sectors": _coerce_int(final_summary.get("known_sectors")),
+        "corp_sectors_visited": _coerce_int(final_summary.get("corp_sectors_visited")),
+    }
+
+
+async def _run_probe_frontier_worker_subprocess(
+    *,
+    ship: dict[str, Any],
+    command: list[str],
+    env: dict[str, str],
+) -> dict[str, Any]:
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        cwd=str(repo_root()),
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout_bytes, stderr_bytes = await process.communicate()
+    stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+    parsed = None
+    parse_error = None
+    if stdout_text.strip():
+        try:
+            parsed = json.loads(stdout_text)
+        except json.JSONDecodeError as exc:
+            parse_error = str(exc)
+
+    result = {
+        "ship": ship,
+        "command": command,
+        "returncode": process.returncode,
+        "ok": process.returncode == 0 and isinstance(parsed, dict),
+        "stderr_tail": stderr_text.splitlines()[-40:],
+    }
+    if parse_error is not None:
+        result["stdout_parse_error"] = parse_error
+        result["stdout_tail"] = stdout_text.splitlines()[-40:]
+        return result
+    if isinstance(parsed, dict):
+        result["summary"] = _summarize_probe_frontier_worker_output(parsed)
+    return result
+
+
+async def _run_probe_fleet_loop(
+    args: argparse.Namespace,
+    config: HeadlessConfig,
+) -> dict[str, Any]:
+    if getattr(args, "session_id", None):
+        raise HeadlessBridgeError(
+            "session-probe-fleet-loop",
+            "--session-id is not supported; fleet workers start their own sessions",
+        )
+    if args.parallelism <= 0:
+        raise HeadlessBridgeError("session-probe-fleet-loop", "--parallelism must be > 0")
+    if args.max_probes is not None and args.max_probes <= 0:
+        raise HeadlessBridgeError("session-probe-fleet-loop", "--max-probes must be > 0")
+    if args.min_probe_warp < 0:
+        raise HeadlessBridgeError("session-probe-fleet-loop", "--min-probe-warp must be >= 0")
+
+    async with HeadlessBridgeProcess(config) as bridge:
+        await bridge.set_log_level(args.bridge_log_level)
+        connect_result = await _connect_session_bridge(bridge, args, config)
+        status_result = await _fetch_status_snapshot(bridge, timeout=min(args.event_timeout_seconds, 30.0))
+        ships_result = await bridge.get_my_ships(timeout=min(args.event_timeout_seconds, 30.0))
+        events = await bridge.drain_events()
+
+    classification = _classify_probe_fleet(
+        ships_result,
+        ship_ids=list(getattr(args, "ship_ids", [])),
+        ship_names=list(getattr(args, "ship_names", [])),
+        min_probe_warp=args.min_probe_warp,
+    )
+    eligible = list(classification["eligible_probes"])
+    selected = eligible[: args.max_probes] if args.max_probes is not None else eligible
+    selection = {
+        "eligible_probes": eligible,
+        "selected_probes": selected,
+        "skipped": classification["skipped"],
+    }
+    if not selected:
+        return {
+            "connect": connect_result,
+            "status": status_result,
+            "ships": ships_result,
+            "selection": selection,
+            "parallelism": min(args.parallelism, 0 if not eligible else len(eligible)),
+            "workers": [],
+            "events": events,
+            "stop_reason": "no_eligible_probes",
+        }
+
+    env = _probe_fleet_worker_env(args, config)
+    semaphore = asyncio.Semaphore(min(args.parallelism, len(selected)))
+
+    async def _run_selected_probe(ship: dict[str, Any]) -> dict[str, Any]:
+        async with semaphore:
+            command = _probe_frontier_worker_command(args, ship=ship)
+            return await _run_probe_frontier_worker_subprocess(
+                ship=ship,
+                command=command,
+                env=env,
+            )
+
+    worker_results = await asyncio.gather(*(_run_selected_probe(ship) for ship in selected))
+    return {
+        "connect": connect_result,
+        "status": status_result,
+        "ships": ships_result,
+        "selection": selection,
+        "parallelism": min(args.parallelism, len(selected)),
+        "workers": worker_results,
+        "events": events,
+        "stop_reason": "workers_completed",
+    }
 
 
 async def _run_probe_frontier_loop(
