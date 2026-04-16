@@ -23,6 +23,11 @@ The intent is not just to scaffold code, but to keep a running record of:
    distinguish real progress from chatter.
 5. Keep extending post-tutorial live-player surfaces from the website:
    corporation growth, unowned-ship collection, salvage, rename, and combat.
+6. Keep the current leaderboard climb strategy explicit:
+   - exploration through corp probes until visible-board entry
+   - low-capital trading via `1908 <-> 3358` RO shuttle
+   - mid-capital trading via `674 -> 907 -> 674` NS/QF cycle
+   - higher-capital trading via full-hold `472 -> 3358` NS runs
 
 ## Current Milestones
 
@@ -139,6 +144,8 @@ Implemented:
 - first-class session commands for status, ports, map, chat history, ships,
   ship definitions, corporation data, task events, and quest status
 - exact frontend prompt contracts for trade orders and ship purchase requests
+- first-class personal-ship tasking with real `task.start`/`task.finish`
+  watching through `session-player-task`
 - first-class corp-ship tasking with real `task.start`/`task.finish` watching
 - exact frontend prompt contract for collecting an unowned ship in the sector
 - a reusable `loop` runner for long bot-driven objectives
@@ -182,16 +189,19 @@ Latest live state observed through the session surface:
 - character: `gbheadless6039`
 - corporation: `gbheadless6039 corp`
 - personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- personal ship sector: `472`
-- personal ship credits: `31`
+- personal ship sector: `3358`
+- personal ship credits: `1205`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `692`
+- corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `867`
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- warp power: `290`
+- warp power: `191`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
+- visible exploration board entry: `54` sectors visited, observed around rank `98-99`
+- estimated wealth: `32205`
+- visible wealth gap: about `3440`
 
 Latest live progression proved:
 
@@ -218,6 +228,20 @@ Latest live progression proved:
   task finish, while `corporation.data` lagged
 - implemented the exact frontend unowned-ship prompt surface and reproduced a
   current live failure mode against real unowned-ship IDs at sector `472`
+- added `leaderboard-self-summary` and corrected it so exploration estimates
+  use the real production union behavior instead of the underreported
+  personal-only field
+- added `session-player-task` as a first-class watched surface for short
+  personal-ship objectives
+- pushed the corporation probe through a 29-sector exploration run that
+  entered the visible exploration board at `54` sectors
+- mapped the current best live trade ladder by capital band:
+  - low capital: `1908 <-> 3358` Retro Organics shuttle
+  - mid capital: `674 -> 907 -> 674` NS/QF cycle
+  - higher capital: full-hold `472 -> 3358` Neuro Symbolics run
+- proved the economic ladder live and grew the personal ship from `31`
+  credits to `1205` credits while staying entirely on the regular-player
+  session surface
 
 Interpretation:
 

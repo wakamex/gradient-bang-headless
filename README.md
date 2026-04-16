@@ -71,6 +71,7 @@ gb-headless character-list --access-token "$GB_ACCESS_TOKEN"
 gb-headless character-create --access-token "$GB_ACCESS_TOKEN"
 gb-headless start-session --access-token "$GB_ACCESS_TOKEN"
 gb-headless leaderboard-resources
+gb-headless leaderboard-self-summary --transport daily
 gb-headless signup-and-start \
   --verify-url 'https://api.gradient-bang.com/auth/v1/verify?...'
 gb-headless session-connect --character-id "$GB_CHARACTER_ID" --access-token "$GB_ACCESS_TOKEN"
@@ -154,6 +155,11 @@ gb-headless session-watch \
   --access-token "$GB_ACCESS_TOKEN" \
   --message-type start \
   --duration-seconds 5
+gb-headless session-player-task \
+  --character-id "$GB_CHARACTER_ID" \
+  --access-token "$GB_ACCESS_TOKEN" \
+  --task-description 'Move to sector 1908, buy as much retro organics as possible there, return to sector 3358, sell all retro organics, then stop and report final credits and sector.' \
+  --wait-for-finish
 gb-headless call leaderboard_resources --method GET
 gb-headless status --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
 gb-headless plot-course --to-sector 301 --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_TOKEN"
@@ -168,6 +174,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `call` is a generic edge-function wrapper.
 - `leaderboard-resources` is the preferred public command for the leaderboard
   read model instead of `call leaderboard_resources --method GET`.
+- `leaderboard-self-summary` combines the public leaderboard read with live
+  session status and ship state to produce a compact "my stats vs leaders"
+  summary for the configured character.
 - `status`, `move`, `plot-course`, `map-region`, `known-ports`, `trade`,
   `recharge-warp`, `purchase-fighters`, `ship-definitions`, `ship-purchase`,
   `quest-status`, `quest-assign`, and `quest-claim-reward` are the preferred
@@ -178,8 +187,8 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
   `session-quest-status`, `session-assign-quest`, `session-claim-reward`,
   `session-claim-all-rewards`, `session-cancel-task`,
   `session-skip-tutorial`, `session-user-text`, `session-trade-order`,
-  `session-purchase-ship`, and `session-watch` follow the frontend's real
-  message -> event pattern and are preferred over hand-written
+  `session-player-task`, `session-purchase-ship`, and `session-watch`
+  follow the frontend's real message -> event pattern and are preferred over hand-written
   `session-message` payloads.
 - `session-claim-all-rewards` is a headless convenience wrapper that batches
   currently claimable quest rewards. It is built on the real
@@ -188,6 +197,9 @@ gb-headless events-since --character-id "$GB_CHARACTER_ID" --api-token "$GB_API_
 - `session-corp-task` is a headless convenience wrapper for live corp-ship
   tasking. It uses regular player text, then waits on real `task.start` and
   `task.finish` events for the named corporation ship.
+- `session-player-task` does the same for the personal ship. It is the
+  preferred surface for short deterministic bot-driven objectives like
+  single-route trade loops or move-and-sell steps.
 - `session-trade-order`, `session-purchase-ship`, and
   `session-purchase-corp-ship` send the exact strings the upstream React
   client builds in `TradePanel.tsx` and `ShipDetails.tsx`.

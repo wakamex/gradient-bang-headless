@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from typing import Any
 
-from .config import HeadlessConfig, update_dotenv
+from .config import HeadlessConfig, repo_root, update_dotenv
 from .bridge import HeadlessBridgeError, HeadlessBridgeProcess, SessionConnectOptions
 from .frontend_prompts import (
     build_corporation_ship_purchase_prompt,
@@ -103,6 +104,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     leaderboard_resources.add_argument("--force-refresh", action="store_true")
     _add_common_config_args(leaderboard_resources)
+
+    leaderboard_self_summary = sub.add_parser(
+        "leaderboard-self-summary",
+        help="Compare live self stats against current human leaderboard leaders",
+    )
+    _add_session_connect_args(leaderboard_self_summary)
+    leaderboard_self_summary.add_argument("--force-refresh", action="store_true")
+    leaderboard_self_summary.add_argument("--event-timeout-seconds", type=float, default=30.0)
 
     signup_and_start = sub.add_parser(
         "signup-and-start",
@@ -285,6 +294,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_session_connect_args(session_user_text)
     session_user_text.add_argument("--text", required=True)
     session_user_text.add_argument("--wait-seconds", type=float, default=0.0)
+
+    session_player_task = sub.add_parser(
+        "session-player-task",
+        help="Connect a session, send a personal task via text, and watch task lifecycle events",
+    )
+    _add_session_connect_args(session_player_task)
+    session_player_task.add_argument("--task-description", required=True)
+    session_player_task.add_argument("--wait-for-finish", action="store_true")
+    session_player_task.add_argument("--event-timeout-seconds", type=float, default=60.0)
 
     session_trade_order = sub.add_parser(
         "session-trade-order",
@@ -768,6 +786,31 @@ async def dispatch(args: argparse.Namespace) -> int:
             print(dump_json(result))
             return 0
 
+    if args.command == "leaderboard-self-summary":
+        async with HeadlessApiClient(config) as client:
+            leaderboard_result = await client.leaderboard_resources(
+                force_refresh=args.force_refresh,
+            )
+
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            await bridge.connect(_session_connect_options_from_args(args, config))
+            status_result = await bridge.get_my_status(timeout=args.event_timeout_seconds)
+            ships_result = await bridge.get_my_ships(timeout=args.event_timeout_seconds)
+
+        print(
+            dump_json(
+                _leaderboard_self_summary(
+                    config=config,
+                    leaderboard_result=leaderboard_result,
+                    status_result=status_result,
+                    ships_result=ships_result,
+                    transport=args.transport,
+                )
+            )
+        )
+        return 0
+
     if args.command == "signup-and-start":
         async with HeadlessApiClient(config) as client:
             result = await client.signup_and_start(
@@ -1210,6 +1253,32 @@ async def dispatch(args: argparse.Namespace) -> int:
                     {
                         "connect": connect_result,
                         "result": action_result,
+                        "events": await bridge.drain_events(),
+                    }
+                )
+            )
+            return 0
+
+    if args.command == "session-player-task":
+        async with HeadlessBridgeProcess(config) as bridge:
+            await bridge.set_log_level(args.bridge_log_level)
+            connect_result = await bridge.connect(_session_connect_options_from_args(args, config))
+            action_result = await bridge.user_text_input(
+                args.task_description,
+                wait_seconds=0.0,
+            )
+            watch_result = await _watch_player_task(
+                bridge,
+                wait_for_finish=args.wait_for_finish,
+                timeout=args.event_timeout_seconds,
+            )
+            print(
+                dump_json(
+                    {
+                        "connect": connect_result,
+                        "prompt": args.task_description,
+                        "result": action_result,
+                        "watch": watch_result,
                         "events": await bridge.drain_events(),
                     }
                 )
@@ -2774,6 +2843,310 @@ def _select_login_character(
         }
 
     return None
+
+
+def _leaderboard_self_summary(
+    *,
+    config: HeadlessConfig,
+    leaderboard_result: dict[str, Any],
+    status_result: dict[str, Any],
+    ships_result: dict[str, Any],
+    transport: str,
+) -> dict[str, Any]:
+    status_payload = _extract_bridge_payload(status_result)
+    ships_payload = _extract_bridge_payload(ships_result)
+    player = status_payload.get("player") if isinstance(status_payload, dict) else None
+    ship = status_payload.get("ship") if isinstance(status_payload, dict) else None
+    source = status_payload.get("source") if isinstance(status_payload, dict) else None
+    ships = ships_payload.get("ships") if isinstance(ships_payload, dict) else None
+
+    player_name = player.get("name") if isinstance(player, dict) else None
+    character_id = player.get("id") if isinstance(player, dict) else None
+    if not isinstance(player_name, str) or not player_name:
+        player_name = config.character_name
+    if not isinstance(character_id, str) or not character_id:
+        character_id = config.character_id
+
+    wealth_rows = _human_leaderboard_rows(leaderboard_result.get("wealth"), "total_wealth")
+    trading_rows = _human_leaderboard_rows(leaderboard_result.get("trading"), "total_trade_volume")
+    exploration_rows = _human_leaderboard_rows(leaderboard_result.get("exploration"), "sectors_visited")
+
+    wealth_entry = _find_leaderboard_entry(wealth_rows, character_id)
+    trading_entry = _find_leaderboard_entry(trading_rows, character_id)
+    exploration_entry = _find_leaderboard_entry(exploration_rows, character_id)
+
+    wealth_estimate = _estimate_visible_wealth(ships, player)
+
+    exploration_value = (
+        _coerce_int(exploration_entry.get("sectors_visited"))
+        if isinstance(exploration_entry, dict)
+        else _estimate_exploration_value(player)
+    )
+    reported_sectors_visited = _coerce_int(player.get("sectors_visited")) if isinstance(player, dict) else 0
+    corp_sectors_visited = _coerce_int(player.get("corp_sectors_visited")) if isinstance(player, dict) else None
+    total_sectors_known = _coerce_int(player.get("total_sectors_known")) if isinstance(player, dict) else None
+
+    wealth_leader = wealth_rows[0] if wealth_rows else None
+    trading_leader = trading_rows[0] if trading_rows else None
+    exploration_leader = exploration_rows[0] if exploration_rows else None
+
+    return {
+        "player_name": player_name,
+        "character_id": character_id,
+        "transport": transport,
+        "leaderboard_cached": bool(leaderboard_result.get("cached")),
+        "status_timestamp": source.get("timestamp") if isinstance(source, dict) else None,
+        "summary": {
+            "wealth": {
+                "self": {
+                    "estimated_total_wealth": wealth_estimate["total_wealth"],
+                    "bank_credits": wealth_estimate["bank_credits"],
+                    "ship_credits": wealth_estimate["ship_credits"],
+                    "cargo_value": wealth_estimate["cargo_value"],
+                    "ship_value": wealth_estimate["ship_value"],
+                    "ships_owned_visible": wealth_estimate["ships_owned_visible"],
+                    "corp_ships_visible": wealth_estimate["corp_ships_visible"],
+                    "active_ship_name": ship.get("ship_name") if isinstance(ship, dict) else None,
+                    "active_ship_type": ship.get("ship_type") if isinstance(ship, dict) else None,
+                    "note": "Estimated from live visible ships plus bank credits.",
+                },
+                "leader": _leader_summary(wealth_leader, "total_wealth"),
+                "leaderboard": _leaderboard_position(
+                    wealth_rows,
+                    wealth_entry,
+                    "total_wealth",
+                    wealth_estimate["total_wealth"],
+                ),
+            },
+            "trading": {
+                "self": (
+                    {
+                        "total_trade_volume": _coerce_int(trading_entry.get("total_trade_volume")),
+                        "total_trades": _coerce_int(trading_entry.get("total_trades")),
+                        "ports_visited": _coerce_int(trading_entry.get("ports_visited")),
+                        "note": "Exact only when your row is present on the visible board.",
+                    }
+                    if isinstance(trading_entry, dict)
+                    else {
+                        "total_trade_volume": None,
+                        "total_trades": None,
+                        "ports_visited": None,
+                        "note": "Unavailable from current self-read surfaces when off the visible board.",
+                    }
+                ),
+                "leader": _leader_summary(trading_leader, "total_trade_volume"),
+                "leaderboard": _leaderboard_position(
+                    trading_rows,
+                    trading_entry,
+                    "total_trade_volume",
+                    _coerce_int(trading_entry.get("total_trade_volume")) if isinstance(trading_entry, dict) else None,
+                ),
+            },
+            "exploration": {
+                "self": {
+                    "estimated_sectors_visited": exploration_value,
+                    "sectors_visited": reported_sectors_visited,
+                    "corp_sectors_visited": corp_sectors_visited,
+                    "total_sectors_known": total_sectors_known,
+                    "note": "Estimate prefers the production leaderboard row when visible and otherwise falls back to live known-sector counts because leaderboard exploration unions personal and corporation discovery.",
+                },
+                "leader": _leader_summary(exploration_leader, "sectors_visited"),
+                "leaderboard": _leaderboard_position(
+                    exploration_rows,
+                    exploration_entry,
+                    "sectors_visited",
+                    exploration_value,
+                ),
+            },
+        },
+    }
+
+
+def _extract_bridge_payload(result: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    server_event = result.get("server_event")
+    if not isinstance(server_event, dict):
+        return {}
+    data = server_event.get("data")
+    if not isinstance(data, dict):
+        return {}
+    payload = data.get("payload")
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _human_leaderboard_rows(entries: Any, stat_key: str) -> list[dict[str, Any]]:
+    if not isinstance(entries, list):
+        return []
+    rows = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("player_type") == "human"
+    ]
+    rows.sort(key=lambda entry: _coerce_int(entry.get(stat_key)), reverse=True)
+    return rows
+
+
+def _find_leaderboard_entry(
+    rows: list[dict[str, Any]],
+    character_id: str | None,
+) -> dict[str, Any] | None:
+    if not isinstance(character_id, str) or not character_id:
+        return None
+    for row in rows:
+        if row.get("player_id") == character_id:
+            return row
+    return None
+
+
+def _leader_summary(entry: dict[str, Any] | None, stat_key: str) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    summary = {
+        "player_name": entry.get("player_name"),
+        "value": _coerce_int(entry.get(stat_key)),
+    }
+    if stat_key == "total_wealth":
+        summary["ships_owned"] = _coerce_int(entry.get("ships_owned"))
+    if stat_key == "total_trade_volume":
+        summary["total_trades"] = _coerce_int(entry.get("total_trades"))
+        summary["ports_visited"] = _coerce_int(entry.get("ports_visited"))
+    return summary
+
+
+def _leaderboard_position(
+    rows: list[dict[str, Any]],
+    own_entry: dict[str, Any] | None,
+    stat_key: str,
+    self_value: int | None,
+) -> dict[str, Any]:
+    floor_entry = rows[-1] if rows else None
+    leader_entry = rows[0] if rows else None
+    visible_rank = None
+    if isinstance(own_entry, dict):
+        try:
+            visible_rank = rows.index(own_entry) + 1
+        except ValueError:
+            visible_rank = None
+
+    floor_value = _coerce_int(floor_entry.get(stat_key)) if isinstance(floor_entry, dict) else None
+    leader_value = _coerce_int(leader_entry.get(stat_key)) if isinstance(leader_entry, dict) else None
+
+    gap_to_visible_floor = None
+    if self_value is not None and floor_value is not None:
+        gap_to_visible_floor = max(0, floor_value - self_value)
+
+    gap_to_leader = None
+    if self_value is not None and leader_value is not None:
+        gap_to_leader = max(0, leader_value - self_value)
+
+    return {
+        "visible_rank": visible_rank,
+        "off_visible_board": visible_rank is None,
+        "visible_board_size": len(rows),
+        "visible_floor": (
+            {
+                "player_name": floor_entry.get("player_name"),
+                "value": floor_value,
+            }
+            if isinstance(floor_entry, dict)
+            else None
+        ),
+        "gap_to_visible_floor": gap_to_visible_floor,
+        "gap_to_leader": gap_to_leader,
+    }
+
+
+def _estimate_visible_wealth(ships: Any, player: Any) -> dict[str, int]:
+    bank_credits = _coerce_int(player.get("credits_in_bank")) if isinstance(player, dict) else 0
+    ship_credits = 0
+    cargo_value = 0
+    ship_value = 0
+    ships_owned_visible = 0
+    corp_ships_visible = 0
+    ship_base_values = _load_ship_base_values()
+
+    if isinstance(ships, list):
+        for ship in ships:
+            if not isinstance(ship, dict):
+                continue
+            if ship.get("destroyed_at") is not None:
+                continue
+            ships_owned_visible += 1
+            if ship.get("owner_type") == "corporation":
+                corp_ships_visible += 1
+            ship_credits += _coerce_int(ship.get("credits"))
+            cargo = ship.get("cargo")
+            if isinstance(cargo, dict):
+                cargo_value += (
+                    _coerce_int(cargo.get("quantum_foam"))
+                    + _coerce_int(cargo.get("retro_organics"))
+                    + _coerce_int(cargo.get("neuro_symbolics"))
+                ) * 100
+            ship_type = ship.get("ship_type")
+            if isinstance(ship_type, str):
+                ship_value += ship_base_values.get(ship_type, 0)
+
+    return {
+        "total_wealth": bank_credits + ship_credits + cargo_value + ship_value,
+        "bank_credits": bank_credits,
+        "ship_credits": ship_credits,
+        "cargo_value": cargo_value,
+        "ship_value": ship_value,
+        "ships_owned_visible": ships_owned_visible,
+        "corp_ships_visible": corp_ships_visible,
+    }
+
+
+def _estimate_exploration_value(player: Any) -> int:
+    if not isinstance(player, dict):
+        return 0
+    total_known = _coerce_int(player.get("total_sectors_known"))
+    sectors_visited = _coerce_int(player.get("sectors_visited"))
+    corp_sectors_visited = _coerce_int(player.get("corp_sectors_visited"))
+    return max(total_known, sectors_visited, corp_sectors_visited)
+
+
+def _load_ship_base_values() -> dict[str, int]:
+    ships_file = repo_root() / "upstream" / "client" / "app" / "src" / "types" / "ships.ts"
+    try:
+        text = ships_file.read_text()
+    except OSError:
+        return {}
+
+    ship_type_re = re.compile(r'ship_type:\s*"([^"]+)"')
+    base_value_re = re.compile(r"base_value:\s*(\d+)")
+    current_ship_type: str | None = None
+    values: dict[str, int] = {}
+
+    for line in text.splitlines():
+        ship_match = ship_type_re.search(line)
+        if ship_match:
+            current_ship_type = ship_match.group(1)
+            continue
+        base_match = base_value_re.search(line)
+        if base_match and current_ship_type:
+            values[current_ship_type] = int(base_match.group(1))
+            current_ship_type = None
+
+    return values
+
+
+def _coerce_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(float(value))
+        except ValueError:
+            return 0
+    return 0
 
 
 def _parse_json_object(raw: str) -> dict[str, Any]:

@@ -5,26 +5,31 @@ in the live Gradient Bang production game.
 
 ## Current State
 
-- Last updated: 2026-04-15 America/Toronto
+- Last updated: 2026-04-16 America/Toronto
 - Character: `gbheadless6039`
 - Character ID: `d44df13c-ea0d-4009-aba2-b584a8708ec1`
 - Corporation: `gbheadless6039 corp`
 - Corporation ID: `e6c71a07-85af-4e2e-ac47-fd82bf6cef35`
 - Personal ship: `gbheadless Kestrel` (`kestrel_courier`)
-- Personal ship sector: `472`
-- Personal ship credits: `31`
+- Personal ship sector: `3358`
+- Personal ship credits: `1,205`
+- Personal ship warp: `191/500`
 - Corporation fleet:
   - `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) in sector `472`
-  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `692`
+  - `gbheadless Auto Probe 1` (`autonomous_probe`) in sector `867`
   - destroyed historical hull: `gbheadless Auto Probe 20260416-0312`
+- Visible leaderboard status:
+  - exploration: on the visible board at `54` sectors visited, observed around rank `98-99`
+  - wealth: off the visible board, estimated `32,205` total wealth with a current gap of about `3,440`
+  - trading: still off the visible board
 - Completed quests:
   - `tutorial`
   - `tutorial_corporations`
 - Current frontier:
-  - determine whether unowned-ship collection is a live prompt-path bug or a recoverable client-side mismatch
-  - start giving the new light hauler productive work instead of leaving it parked at the megaport
-  - keep probing live post-tutorial exploration for new contracts, better routes, or richer midgame loops
-  - keep converting durable live-player actions into first-class headless commands as they are proven
+  - keep converting the newly mapped live trade ladder into a reusable headless loop
+  - push wealth onto the visible board, likely by combining personal profits with corporation-ship work
+  - continue climbing trading toward the visible board now that the capital base is over `1,000`
+  - revisit unowned-ship recovery later; it is still the highest-leverage unresolved wealth surface
 
 ## Timeline
 
@@ -93,6 +98,44 @@ in the live Gradient Bang production game.
 - Found a useful verification nuance:
   - `ships.list` reflected the probe at sector `692` immediately
   - `corporation.data` still lagged on the older sector right after task completion
+
+### Leaderboard Reconnaissance And Exploration Rank
+
+- Added a first-class `leaderboard-self-summary` command to compare live self state against the public leaderboard.
+- Verified from the upstream code and live endpoint that the website only exposes three player-facing leaderboard categories:
+  `wealth`, `trading`, and `exploration`.
+- Verified the important production rule split:
+  - wealth includes corporation ship wealth for each member
+  - exploration unions personal and corporation discovery
+  - trading remains personal-only
+- Used a longer `session-corp-task` exploration run to push `gbheadless Auto Probe 1 [eab4cd]` from sector `4658` through `29` new sectors and finish in sector `867`.
+- The probe's route summary for that run was:
+  `3094 -> 4333 -> 1417 -> 319 -> 1785 -> 1942 -> 580 -> 1333 -> 4790 -> 611 -> 1413 -> 3124 -> 1469 -> 2811 -> 1179 -> 2513 -> 596 -> 1575 -> 2891 -> 4948 -> 2892 -> 2579 -> 2881 -> 2969 -> 3918 -> 780 -> 1320 -> 1421 -> 867`
+- That run pushed the live account onto the visible exploration board at `54` sectors visited.
+- The exact visible rank moved slightly between refreshes, but the live public board showed it around `98-99`.
+
+### Midgame Trading Ladder
+
+- Added a first-class `session-player-task` command so the personal ship can run short watched objectives the same way the corporation ships already do.
+- Used the live known-port graph to stop guessing and map the best route by capital band.
+- Current proven route ladder is:
+  - low capital: `1908 -> 3358` Retro Organics shuttle
+  - mid capital from sector `674`: `674 -> 907 -> 674` NS/QF cycle
+  - higher capital: `472 -> 3358` full-hold Neuro Symbolics run
+- Proved the low-capital bootstrap directly:
+  - `1908` sold RO at `8`, then later `9`
+  - `3358` bought RO at `12`
+  - repeated shuttle runs grew the ship from `157` to `233`, then to `349`, then to `529` credits
+- Proved the mid-capital cycle directly:
+  - `674` sold NS at `42`
+  - `907` bought NS at `46` and sold QF at `19`
+  - `674` bought QF at `25`
+  - one full `674 -> 907 -> 674` loop grew credits from `691` to `935`
+- Proved the higher-capital handoff directly:
+  - with `935` credits on hand, bought a full `30` Neuro Symbolics at sector `472`
+  - sold all `30` at sector `3358`
+  - finished at `1,205` credits with `191` warp in sector `3358`
+- The headless client is now no longer just replaying the tutorial route. It has a live-tested economic ladder that changes with capital and current location.
 
 ### Post-Tutorial Findings
 
