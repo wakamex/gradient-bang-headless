@@ -21,6 +21,7 @@ position into leaderboard gains.
 
 - The best long-term ROI is corporation-probe exploration.
 - Use `session-probe-frontier-loop` as the default exploration surface.
+- Use `session-probe-fleet-loop` whenever more than one probe is eligible.
 - Search from the probe's current sector first, not the player's sector.
 - Only treat a frontier as real if the map read shows actionable local
   frontier, not just a dangling remembered stub.
@@ -65,12 +66,12 @@ Why:
 
 - `session-probe-frontier-loop` is now the highest-confidence compounding
   surface.
-- The probe-local branch chain `2015 -> 790 -> 2896 -> 3404 -> 3560` is real
-  and has now delivered four consecutive successful exploration pushes.
+- The probe-local branch chain `2015 -> 790 -> 2896 -> 3404 -> 3560 -> 3870`
+  is real and has now delivered five consecutive successful exploration pushes.
 - Latest strong exploration state:
-  - exploration `397`, visible rank `29`
-  - next visible row is only `10` sectors above
-  - probe ended the last successful run at sector `3560`
+  - exploration `408`, visible rank `28`
+  - next visible row is only `3` sectors above
+  - probe ended the last successful run at sector `3870`
 - Latest strong trading state:
   - trading `290872`, visible rank `27`
   - player ship is clean and liquid at sector `256`
@@ -80,8 +81,10 @@ Why:
 
 ## What To Do Next
 
-1. Keep running `session-probe-frontier-loop` while the next visible
-   exploration row remains cheaper than the next trading or wealth row.
+1. Keep running probe-led exploration while the next visible exploration row
+   remains cheaper than the next trading or wealth row.
+   Use `session-probe-fleet-loop` whenever there is more than one eligible
+   probe; otherwise keep using `session-probe-frontier-loop`.
 2. Force-refresh leaderboard state after meaningful exploration jumps.
 3. Only spend player-ship time on short exact trade batches if:
    - exploration stalls temporarily, or

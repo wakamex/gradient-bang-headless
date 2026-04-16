@@ -165,6 +165,9 @@ Implemented:
   unvisited
 - a first-class `session-probe-frontier-loop` that searches from the probe,
   picks an actionable frontier branch, and executes one bounded exploration run
+- a first-class `session-probe-fleet-loop` that selects idle corporation
+  probes, then runs one `session-probe-frontier-loop` subprocess worker per
+  ship instead of sharing a single bridge event stream
 - a first-class `session-trade-opportunities` helper for ranking visible trade routes by profit and travel cost
 - map-backed route ranking using the live `session-map` graph instead of hop-delta approximations
 - a first-class `session-auto-trade-loop` that chooses a route by goal and runs it
@@ -247,15 +250,15 @@ Latest live state observed through the session surface:
 - personal ship warp power: `164`
 - corp ship: `gbheadless Auto Hauler 1` (`autonomous_light_hauler`) stranded in sector `2204` with `0/500` warp
 - corp ship: `gbheadless Auto Probe 1` (`autonomous_probe`) stranded in sector `3341` with `0/500` warp
-- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `3560` with `319/500` warp after three consecutive successful probe-frontier runs
+- corp ship: `gbheadless Auto Probe I` (`autonomous_probe`) last observed in sector `3870` with `301/500` warp after the first fleet-loop worker run
 - destroyed corp ship: `gbheadless Auto Probe 20260416-0312`
 - cargo: empty
 - fighters: `300`
-- known sectors: `397`
-- corporation sectors visited: `391`
+- known sectors: `408`
+- corporation sectors visited: `402`
 - `tutorial`: completed
 - `tutorial_corporations`: completed
-- visible exploration board entry: `397` known sectors, currently observed at rank `29`
+- visible exploration board entry: `408` known sectors, currently observed at rank `28`
 - visible trading board entry: `290872` total volume, currently observed at rank `27`
 - visible wealth board entry: currently observed at rank `66` with visible row value `44409`
 
@@ -315,6 +318,16 @@ Latest live progression proved:
   - `3404 -> 3560` for another `+11`
   - visible exploration rank improved from `32` to `29` once the board was
     force-refreshed
+- added `session-probe-fleet-loop` as the safe parallel form of exploration:
+  - connect once to classify owned ships
+  - select only eligible idle corporation probes with warp
+  - spawn one `session-probe-frontier-loop` subprocess worker per selected
+    probe instead of sharing one bridge event stream in-process
+  - the first live proof used `--max-probes 1`, selected `gbheadless Auto Probe I`,
+    and pushed it from sector `3560` to sector `3870` for another `+11`
+    known sectors
+  - visible exploration rank improved again from `29` to `28` after a forced
+    leaderboard refresh
 - used the cleaner post-exploration player state to exact-sell `30`
   `neuro_symbolics` at sector `256`, raising credits to `10809` and trading
   volume to `290872`
